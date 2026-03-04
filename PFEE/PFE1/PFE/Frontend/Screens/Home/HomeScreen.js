@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Keyboard,
   Platform,
   RefreshControl,
@@ -421,8 +422,8 @@ export default function HomeScreen({ navigation }) {
           <View style={[styles.pageInner, { maxWidth: contentWidth }]}>
             <View style={styles.headerTop}>
               <View style={styles.headerLeft}>
-                <Ionicons name="football" size={24} color="#FFFFFF" />
-                <Text style={styles.headerTitle}>Foot Flash</Text>
+                <Image source={require('../../img/result_0.jpeg')} style={styles.appLogo} resizeMode="cover" />
+                <Text style={styles.headerTitle}>KICKLY</Text>
               </View>
             </View>
           </View>
@@ -442,8 +443,8 @@ export default function HomeScreen({ navigation }) {
         <View style={[styles.pageInner, { maxWidth: contentWidth }]}>
           <View style={styles.headerTop}>
             <View style={styles.headerLeft}>
-              <Ionicons name="football" size={24} color="#FFFFFF" />
-              <Text style={styles.headerTitle}>Foot Flash</Text>
+              <Image source={require('../../img/result_0.jpeg')} style={styles.appLogo} resizeMode="cover" />
+              <Text style={styles.headerTitle}>KICKLY</Text>
             </View>
 
             <View style={styles.headerRight}>
@@ -524,6 +525,11 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 20,
     fontWeight: '900',
+  },
+  appLogo: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
   },
   headerRight: {
     flexDirection: 'row',

@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "Frontend",
-    "slug": "Frontend",
+    "name": "KICKLY",
+    "slug": "kickly",
     "version": "1.0.0",
+    "icon": "./img/result_0.jpeg",
     "orientation": "portrait",
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",

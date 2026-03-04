@@ -28,6 +28,31 @@ router.get("/live", async (req, res) => {
   }
 });
 
+// GET matches by date
+router.get("/by-date", async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return res.status(400).json({ error: "Query param 'date' must be in YYYY-MM-DD format" });
+    }
+
+    const startOfDay = new Date(`${date}T00:00:00.000Z`);
+    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+
+    const matches = await Match.find({
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
+    }).sort({ date: 1 });
+
+    res.status(200).json({ matches });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET matches by league
 router.get("/league/:league", async (req, res) => {
   try {

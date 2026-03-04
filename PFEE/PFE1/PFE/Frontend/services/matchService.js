@@ -39,6 +39,17 @@ export const matchService = {
     }
   },
 
+  getMatchesByDate: async (date) => {
+    try {
+      const response = await fetch(`${API_URL}/by-date?date=${encodeURIComponent(date)}`);
+      const data = await response.json();
+      return data.matches || [];
+    } catch (error) {
+      console.error('Error:', error);
+      return [];
+    }
+  },
+
   getSupportedLeagues: async () => {
     try {
       const response = await fetch(`${API_URL}/import/leagues`);

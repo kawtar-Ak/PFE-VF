@@ -13,6 +13,29 @@ import { Ionicons } from "@expo/vector-icons";
 import { matchService } from "../../services/matchService";
 import { favoritesService } from "../../services/favoritesService";
 
+const LIVE_WINDOW_PAST_MS = 2 * 60 * 60 * 1000;
+const LIVE_WINDOW_FUTURE_MS = 4 * 60 * 60 * 1000;
+
+const isLiveStatus = (status) => String(status || "").toLowerCase() === "live";
+
+const isInLiveWindow = (matchDate) => {
+  const date = new Date(matchDate);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const now = Date.now();
+  return date.getTime() >= now - LIVE_WINDOW_PAST_MS && date.getTime() <= now + LIVE_WINDOW_FUTURE_MS;
+};
+
+const normalizeLiveMatches = (matches) => {
+  const liveOnly = Array.isArray(matches)
+    ? matches.filter((match) => isLiveStatus(match.status) && isInLiveWindow(match.date))
+    : [];
+
+  return liveOnly.sort((left, right) => new Date(left.date) - new Date(right.date));
+};
+
 export default function LiveScreen({ navigation }) {
   const [matches, setMatches] = useState([]);
   const [favorites, setFavorites] = useState([]);
@@ -24,34 +47,30 @@ export default function LiveScreen({ navigation }) {
     try {
       const favs = await favoritesService.getFavorites();
       setFavorites(Array.isArray(favs) ? favs : []);
-    } catch (e) {
-      console.error("Erreur chargement favoris:", e);
+    } catch (error) {
+      console.error("Erreur chargement favoris:", error);
     }
   };
 
   const loadLiveMatches = async () => {
     try {
-      const all = await matchService.getAllMatches();
-      const list = Array.isArray(all) ? all : [];
+      const liveMatches = await matchService.getLiveMatches();
+      const nextMatches = normalizeLiveMatches(liveMatches);
 
-      // ✅ backend: scheduled | live | finished
-      const liveOrSoon = list.filter((m) => {
-        const s = String(m.status || "").toLowerCase();
-        return s === "live" || s === "scheduled";
+      setMatches(nextMatches);
+      setExpandedLeagues((previous) => {
+        const nextExpanded = { ...previous };
+
+        nextMatches.forEach((match) => {
+          if (match?.league && nextExpanded[match.league] === undefined) {
+            nextExpanded[match.league] = true;
+          }
+        });
+
+        return nextExpanded;
       });
-
-      // tri par date (prochain / live en haut)
-      liveOrSoon.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      setMatches(liveOrSoon);
-
-      const leagues = {};
-      liveOrSoon.forEach((m) => {
-        if (m?.league) leagues[m.league] = true;
-      });
-      setExpandedLeagues(leagues);
-    } catch (e) {
-      console.error("Erreur lors du chargement des matches:", e);
+    } catch (error) {
+      console.error("Erreur lors du chargement des matches:", error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -62,21 +81,25 @@ export default function LiveScreen({ navigation }) {
     loadLiveMatches();
     loadFavorites();
 
-    // ✅ refresh auto 60s
-    const interval = setInterval(() => {
-      loadLiveMatches();
-    }, 60 * 1000);
-
-    // ✅ refresh favoris instantané
     const unsubFav = favoritesService.subscribe(() => {
       loadFavorites();
     });
 
     return () => {
-      clearInterval(interval);
       unsubFav?.();
     };
   }, []);
+
+  useEffect(() => {
+    const refreshIntervalMs = matches.length > 0 ? 30 * 1000 : 60 * 1000;
+    const interval = setInterval(() => {
+      loadLiveMatches();
+    }, refreshIntervalMs);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [matches.length]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -86,40 +109,41 @@ export default function LiveScreen({ navigation }) {
   };
 
   const toggleLeague = (leagueName) => {
-    setExpandedLeagues((prev) => ({
-      ...prev,
-      [leagueName]: !prev[leagueName],
+    setExpandedLeagues((previous) => ({
+      ...previous,
+      [leagueName]: !previous[leagueName],
     }));
   };
 
   const grouped = useMemo(() => {
     const byLeague = {};
-    matches.forEach((m) => {
-      const league = m.league || "Autre";
+
+    matches.forEach((match) => {
+      const league = match.league || "Autre";
       if (!byLeague[league]) byLeague[league] = [];
-      byLeague[league].push(m);
+      byLeague[league].push(match);
     });
 
     return Object.entries(byLeague)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([league, leagueMatches]) => {
-        const show = expandedLeagues[league] !== false;
-        return { title: league, data: show ? leagueMatches : [] };
-      });
-  }, [matches, expandedLeagues]);
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([league, leagueMatches]) => ({
+        title: league,
+        data: expandedLeagues[league] === false ? [] : leagueMatches,
+      }));
+  }, [expandedLeagues, matches]);
 
   const renderSectionHeader = ({ section: { title } }) => (
     <TouchableOpacity style={styles.leagueHeader} onPress={() => toggleLeague(title)} activeOpacity={0.9}>
       <View style={styles.leagueHeaderLeft}>
         <Ionicons
-          name={expandedLeagues[title] ? "chevron-down" : "chevron-forward"}
+          name={expandedLeagues[title] === false ? "chevron-forward" : "chevron-down"}
           size={20}
           color="#ef4444"
         />
         <Text style={styles.leagueTitle} numberOfLines={1}>{title}</Text>
       </View>
       <Text style={styles.leagueCount}>
-        {matches.filter((m) => (m.league || "Autre") === title).length}
+        {matches.filter((match) => (match.league || "Autre") === title).length}
       </Text>
     </TouchableOpacity>
   );
@@ -127,34 +151,6 @@ export default function LiveScreen({ navigation }) {
   const renderMatch = ({ item }) => {
     const matchDate = new Date(item.date);
     const timeStr = matchDate.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-
-    const status = String(item.status || "").toLowerCase();
-    const isLive = status === "live";
-    const isFinished = status === "finished";
-
-    let statusIcon = "🕐";
-    let statusText = "À VENIR";
-    let badgeColor = "#1e293b";
-    let textColor = "#94a3b8";
-    let borderColor = "#64748b";
-    let scoreColor = "#fff";
-
-    if (isLive) {
-      statusIcon = "🔴";
-      statusText = "LIVE";
-      badgeColor = "#7f1d1d";
-      textColor = "#ef4444";
-      borderColor = "#ef4444";
-      scoreColor = "#ef4444";
-    } else if (isFinished) {
-      statusIcon = "✓";
-      statusText = "TERMINÉ";
-      badgeColor = "#0d3b0d";
-      textColor = "#10b981";
-      borderColor = "#10b981";
-      scoreColor = "#fff";
-    }
-
     const isFavorite = favorites.some((fav) => fav?._id === item._id);
 
     const handleToggleFavorite = async () => {
@@ -167,14 +163,14 @@ export default function LiveScreen({ navigation }) {
     };
 
     return (
-      <TouchableOpacity activeOpacity={0.92} onPress={goToDetails} style={[styles.matchCard, { borderLeftColor: borderColor }]}>
+      <TouchableOpacity activeOpacity={0.92} onPress={goToDetails} style={styles.matchCard}>
         <View style={styles.matchHeader}>
           <Text style={styles.matchTime}>{timeStr}</Text>
 
           <View style={styles.matchRightSection}>
-            <View style={[styles.liveBadge, { backgroundColor: badgeColor }]}>
-              <Text style={styles.livePulse}>{statusIcon}</Text>
-              <Text style={[styles.liveText, { color: textColor }]}>{statusText}</Text>
+            <View style={styles.liveBadge}>
+              <Text style={styles.livePulse}>o</Text>
+              <Text style={styles.liveText}>LIVE</Text>
             </View>
 
             <TouchableOpacity onPress={handleToggleFavorite} style={styles.favoriteButton} activeOpacity={0.85}>
@@ -193,9 +189,9 @@ export default function LiveScreen({ navigation }) {
           </View>
 
           <View style={styles.scoreSection}>
-            <Text style={[styles.score, { color: scoreColor }]}>{isLive || isFinished ? (item.homeScore ?? "-") : "-"}</Text>
+            <Text style={[styles.score, styles.scoreLive]}>{item.homeScore ?? "-"}</Text>
             <Text style={styles.scoreSeparator}>-</Text>
-            <Text style={[styles.score, { color: scoreColor }]}>{isLive || isFinished ? (item.awayScore ?? "-") : "-"}</Text>
+            <Text style={[styles.score, styles.scoreLive]}>{item.awayScore ?? "-"}</Text>
           </View>
 
           <View style={styles.teamSection}>
@@ -220,14 +216,12 @@ export default function LiveScreen({ navigation }) {
     );
   }
 
-  const hasLive = matches.some((m) => String(m.status || "").toLowerCase() === "live");
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={styles.headerTitleRow}>
           <Text style={styles.title}>Matches en direct</Text>
-          {hasLive ? <Text style={styles.liveDot}>●</Text> : null}
+          {matches.length > 0 ? <Text style={styles.liveDot}>o</Text> : null}
         </View>
       </View>
 
@@ -239,7 +233,7 @@ export default function LiveScreen({ navigation }) {
       ) : (
         <SectionList
           sections={grouped}
-          keyExtractor={(item) => item._id || Math.random().toString()}
+          keyExtractor={(item, index) => item._id || item.apiMatchId?.toString() || `${item.homeTeam}-${item.awayTeam}-${index}`}
           renderItem={renderMatch}
           renderSectionHeader={renderSectionHeader}
           contentContainerStyle={styles.listContent}
@@ -260,6 +254,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#0f172a",
     borderBottomWidth: 1,
     borderBottomColor: "#1e293b",
+  },
+  headerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   title: { fontSize: 22, fontWeight: "bold", color: "#fff" },
   liveDot: { color: "#ef4444", fontSize: 18, marginTop: 2 },
@@ -301,6 +300,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
     marginVertical: 6,
     borderLeftWidth: 4,
+    borderLeftColor: "#ef4444",
   },
   matchHeader: {
     flexDirection: "row",
@@ -321,9 +321,10 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1,
     borderColor: "#334155",
+    backgroundColor: "#7f1d1d",
   },
-  livePulse: { fontSize: 14 },
-  liveText: { fontSize: 12, fontWeight: "900" },
+  livePulse: { fontSize: 14, color: "#ef4444" },
+  liveText: { fontSize: 12, fontWeight: "900", color: "#ef4444" },
 
   matchContent: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   teamSection: { flex: 1 },
@@ -331,5 +332,6 @@ const styles = StyleSheet.create({
 
   scoreSection: { flexDirection: "row", alignItems: "center", justifyContent: "center", minWidth: 72 },
   score: { fontSize: 18, fontWeight: "900" },
+  scoreLive: { color: "#ef4444" },
   scoreSeparator: { fontSize: 12, color: "#64748b", marginHorizontal: 8, fontWeight: "900" },
 });
