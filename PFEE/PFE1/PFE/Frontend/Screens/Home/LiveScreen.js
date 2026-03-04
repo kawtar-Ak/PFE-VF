@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { matchService } from "../../services/matchService";
 import { favoritesService } from "../../services/favoritesService";
+import TeamLogo from "../../components/TeamLogo";
 
 const LIVE_WINDOW_PAST_MS = 2 * 60 * 60 * 1000;
 const LIVE_WINDOW_FUTURE_MS = 4 * 60 * 60 * 1000;
@@ -185,7 +186,10 @@ export default function LiveScreen({ navigation }) {
 
         <View style={styles.matchContent}>
           <View style={styles.teamSection}>
-            <Text style={styles.teamName} numberOfLines={1}>{item.homeTeam}</Text>
+            <View style={[styles.teamRow, styles.teamRowHome]}>
+              <TeamLogo uri={item.homeTeamLogo} size={22} />
+              <Text style={[styles.teamName, styles.teamNameHome]} numberOfLines={1}>{item.homeTeam}</Text>
+            </View>
           </View>
 
           <View style={styles.scoreSection}>
@@ -195,7 +199,10 @@ export default function LiveScreen({ navigation }) {
           </View>
 
           <View style={styles.teamSection}>
-            <Text style={styles.teamName} numberOfLines={1}>{item.awayTeam}</Text>
+            <View style={[styles.teamRow, styles.teamRowAway]}>
+              <Text style={[styles.teamName, styles.teamNameAway]} numberOfLines={1}>{item.awayTeam}</Text>
+              <TeamLogo uri={item.awayTeamLogo} size={22} />
+            </View>
           </View>
         </View>
       </TouchableOpacity>
@@ -328,7 +335,12 @@ const styles = StyleSheet.create({
 
   matchContent: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   teamSection: { flex: 1 },
+  teamRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  teamRowHome: { justifyContent: "flex-start" },
+  teamRowAway: { justifyContent: "flex-end" },
   teamName: { fontSize: 12, fontWeight: "700", color: "#e2e8f0" },
+  teamNameHome: { textAlign: "left", flex: 1 },
+  teamNameAway: { textAlign: "right", flex: 1 },
 
   scoreSection: { flexDirection: "row", alignItems: "center", justifyContent: "center", minWidth: 72 },
   score: { fontSize: 18, fontWeight: "900" },

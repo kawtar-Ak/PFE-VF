@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { favoritesService } from '../../services/favoritesService';
 import { matchService } from '../../services/matchService';
+import TeamLogo from '../../components/TeamLogo';
 
 export default function HomeScreen({ navigation }) {
   const { width } = useWindowDimensions();
@@ -357,7 +358,12 @@ export default function HomeScreen({ navigation }) {
 
         <View style={styles.matchContent}>
           <View style={styles.teamColumn}>
-            <Text style={styles.teamName} numberOfLines={1}>{item.homeTeam || 'Equipe locale'}</Text>
+            <View style={[styles.teamRow, styles.teamRowHome]}>
+              <TeamLogo uri={item.homeTeamLogo} size={24} />
+              <Text style={[styles.teamName, styles.teamNameHome]} numberOfLines={1}>
+                {item.homeTeam || 'Equipe locale'}
+              </Text>
+            </View>
           </View>
 
           <View style={styles.scoreColumn}>
@@ -367,7 +373,12 @@ export default function HomeScreen({ navigation }) {
           </View>
 
           <View style={styles.teamColumn}>
-            <Text style={styles.teamName} numberOfLines={1}>{item.awayTeam || 'Equipe visiteuse'}</Text>
+            <View style={[styles.teamRow, styles.teamRowAway]}>
+              <Text style={[styles.teamName, styles.teamNameAway]} numberOfLines={1}>
+                {item.awayTeam || 'Equipe visiteuse'}
+              </Text>
+              <TeamLogo uri={item.awayTeamLogo} size={24} />
+            </View>
           </View>
         </View>
       </TouchableOpacity>
@@ -478,7 +489,7 @@ export default function HomeScreen({ navigation }) {
 
       <SectionList
         sections={filteredSections}
-        keyExtractor={(item, index) => item._id || `${item.homeTeam}-${item.awayTeam}-${index}`}
+        keyExtractor={(item, index) => item._id || item.matchId?.toString() || item.apiMatchId?.toString() || `${item.homeTeam}-${item.awayTeam}-${index}`}
         renderItem={renderMatch}
         renderSectionHeader={renderSectionHeader}
         ListHeaderComponent={stickyHeader}
@@ -720,10 +731,29 @@ const styles = StyleSheet.create({
   teamColumn: {
     flex: 1,
   },
+  teamRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  teamRowHome: {
+    justifyContent: 'flex-start',
+  },
+  teamRowAway: {
+    justifyContent: 'flex-end',
+  },
   teamName: {
     color: '#E8EEF8',
     fontSize: 14,
     fontWeight: '800',
+  },
+  teamNameHome: {
+    textAlign: 'left',
+    flex: 1,
+  },
+  teamNameAway: {
+    textAlign: 'right',
+    flex: 1,
   },
   scoreColumn: {
     minWidth: 78,

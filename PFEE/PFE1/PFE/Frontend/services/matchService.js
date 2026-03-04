@@ -135,12 +135,13 @@ export const matchService = {
   }),
 
   mergeMatchIntoList: (matches, incomingMatch) => {
-    if (!incomingMatch?.apiMatchId && !incomingMatch?._id) {
+    if (!incomingMatch?.matchId && !incomingMatch?.apiMatchId && !incomingMatch?._id) {
       return matches;
     }
 
     const matchIndex = matches.findIndex((match) => (
       (incomingMatch._id && match._id === incomingMatch._id) ||
+      (incomingMatch.matchId && match.matchId === incomingMatch.matchId) ||
       (incomingMatch.apiMatchId && match.apiMatchId === incomingMatch.apiMatchId)
     ));
 

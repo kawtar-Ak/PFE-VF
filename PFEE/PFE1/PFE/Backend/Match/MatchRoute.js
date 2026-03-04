@@ -18,11 +18,53 @@ const parseMatchId = (value) => {
   return Number.isInteger(parsed) ? parsed : null;
 };
 
+const scoreMatchQuality = (match) => {
+  const hasHomeLogo = Boolean(match?.homeTeamLogo);
+  const hasAwayLogo = Boolean(match?.awayTeamLogo);
+  const hasStatusShort = Boolean(match?.statusShort);
+  const hasMatchId = Boolean(match?.matchId);
+  const updatedAt = match?.updatedAt ? new Date(match.updatedAt).getTime() : 0;
+
+  let score = 0;
+  if (hasHomeLogo) score += 4;
+  if (hasAwayLogo) score += 4;
+  if (hasStatusShort) score += 2;
+  if (hasMatchId) score += 1;
+
+  return { score, updatedAt };
+};
+
+const dedupeMatches = (matches) => {
+  const bestByKey = new Map();
+
+  matches.forEach((match) => {
+    const key = match?.matchId || match?.apiMatchId || String(match?._id);
+    const currentBest = bestByKey.get(key);
+
+    if (!currentBest) {
+      bestByKey.set(key, match);
+      return;
+    }
+
+    const nextQuality = scoreMatchQuality(match);
+    const bestQuality = scoreMatchQuality(currentBest);
+
+    if (
+      nextQuality.score > bestQuality.score ||
+      (nextQuality.score === bestQuality.score && nextQuality.updatedAt > bestQuality.updatedAt)
+    ) {
+      bestByKey.set(key, match);
+    }
+  });
+
+  return [...bestByKey.values()].sort((left, right) => new Date(left.date) - new Date(right.date));
+};
+
 // GET all matches
 router.get("/", async (req, res) => {
   try {
-    const matches = await Match.find().sort({ date: 1 });
-    res.status(200).json({ matches });
+    const matches = await Match.find().sort({ date: 1 }).lean();
+    res.status(200).json({ matches: dedupeMatches(matches) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -34,9 +76,9 @@ router.get("/live", async (req, res) => {
     const matches = await Match.find({
       status: "live",
       statusShort: { $in: [...LIVE_STATUSES] }
-    }).sort({ date: 1 });
+    }).sort({ date: 1 }).lean();
 
-    res.status(200).json({ matches });
+    res.status(200).json({ matches: dedupeMatches(matches) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -59,9 +101,9 @@ router.get("/by-date", async (req, res) => {
         $gte: startOfDay,
         $lte: endOfDay
       }
-    }).sort({ date: 1 });
+    }).sort({ date: 1 }).lean();
 
-    res.status(200).json({ matches });
+    res.status(200).json({ matches: dedupeMatches(matches) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -70,8 +112,8 @@ router.get("/by-date", async (req, res) => {
 // GET matches by league
 router.get("/league/:league", async (req, res) => {
   try {
-    const matches = await Match.find({ league: req.params.league }).sort({ date: 1 });
-    res.status(200).json({ matches });
+    const matches = await Match.find({ league: req.params.league }).sort({ date: 1 }).lean();
+    res.status(200).json({ matches: dedupeMatches(matches) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

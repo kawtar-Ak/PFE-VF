@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { matchService } from '../../services/matchService';
+import TeamLogo from '../../components/TeamLogo';
 
 const EVENT_ICONS = {
   Goal: '⚽',
@@ -90,6 +91,21 @@ const getEventTimeLabel = (event) => {
   }
 
   return `${minute}'`;
+};
+
+const getMatchTimeLabel = (match) => {
+  const minute = match?.minute;
+  const statusShort = String(match?.statusShort || '').toUpperCase();
+
+  if (minute || minute === 0) {
+    return statusShort ? `${minute}' (${statusShort})` : `${minute}'`;
+  }
+
+  if (statusShort) {
+    return statusShort;
+  }
+
+  return '-';
 };
 
 export default function MatchDetailsScreen({ route, navigation }) {
@@ -219,7 +235,10 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.scoreBoard}>
               <View style={styles.teamColumn}>
                 <Text style={styles.teamLabel}>Domicile</Text>
-                <Text style={styles.teamName}>{match?.homeTeam || 'Equipe locale'}</Text>
+                <View style={styles.teamIdentity}>
+                  <TeamLogo uri={match?.homeTeamLogo} size={42} />
+                  <Text style={styles.teamName}>{match?.homeTeam || 'Equipe locale'}</Text>
+                </View>
               </View>
 
               <View style={styles.scoreBox}>
@@ -230,7 +249,10 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
               <View style={styles.teamColumn}>
                 <Text style={styles.teamLabel}>Exterieur</Text>
-                <Text style={styles.teamName}>{match?.awayTeam || 'Equipe visiteuse'}</Text>
+                <View style={styles.teamIdentity}>
+                  <TeamLogo uri={match?.awayTeamLogo} size={42} />
+                  <Text style={styles.teamName}>{match?.awayTeam || 'Equipe visiteuse'}</Text>
+                </View>
               </View>
             </View>
 
@@ -240,7 +262,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
                   {statusLabel}
                 </Text>
               </View>
-              <Text style={styles.minuteText}>{match?.minute ? `${match.minute}'` : ''}</Text>
+              <Text style={styles.minuteText}>{getMatchTimeLabel(match)}</Text>
             </View>
           </View>
 
@@ -250,6 +272,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <InfoRow label="Ligue" value={match?.league || '-'} />
             <InfoRow label="Saison" value={match?.season?.toString?.() || '-'} />
             <InfoRow label="Tour" value={match?.round || '-'} />
+            <InfoRow label="Temps du match" value={getMatchTimeLabel(match)} />
             <InfoRow label="Stade" value={match?.stadium || match?.venue || '-'} />
             <InfoRow label="Ville" value={match?.city || '-'} />
             <InfoRow label="Arbitre" value={match?.referee || '-'} />
@@ -415,6 +438,13 @@ const styles = StyleSheet.create({
   },
   teamColumn: {
     flex: 1,
+    alignItems: 'center',
+  },
+  teamIdentity: {
+    marginTop: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   teamLabel: {
     color: '#7F8AA3',
@@ -425,8 +455,9 @@ const styles = StyleSheet.create({
   },
   teamName: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '900',
+    textAlign: 'center',
   },
   scoreBox: {
     minWidth: 116,

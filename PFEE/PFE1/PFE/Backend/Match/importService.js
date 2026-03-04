@@ -192,7 +192,12 @@ const isMeaningfulChange = (existing, nextMatch) => {
 };
 
 const upsertMatch = async (match) => Match.findOneAndUpdate(
-  { matchId: match.matchId },
+  {
+    $or: [
+      { matchId: match.matchId },
+      { apiMatchId: match.matchId }
+    ]
+  },
   { $set: match },
   {
     upsert: true,
