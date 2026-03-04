@@ -2,6 +2,8 @@ const fetch = (...args) =>
   import("node-fetch").then(({ default: fetchImpl }) => fetchImpl(...args));
 
 const Match = require("./MatchModel");
+const Team = require("./TeamModel");
+const League = require("./LeagueModel");
 
 const API_SPORTS_BASE_URL = "https://v3.football.api-sports.io";
 const API_SPORTS_KEY = process.env.APISPORTS_KEY;
@@ -117,121 +119,237 @@ const fetchLiveFixtures = async () => requestApiSports("/fixtures", {
   timezone: IMPORT_TIMEZONE
 });
 
-const fetchFixtureById = async (matchId) => {
-  const [fixture] = await requestApiSports("/fixtures", { id: matchId, timezone: IMPORT_TIMEZONE });
+const fetchFixtureById = async (fixtureId) => {
+  const [fixture] = await requestApiSports("/fixtures", { id: fixtureId, timezone: IMPORT_TIMEZONE });
   return fixture || null;
 };
 
-const fetchFixtureEvents = async (matchId) => requestApiSports("/fixtures/events", { fixture: matchId });
-const fetchFixtureStatistics = async (matchId) => requestApiSports("/fixtures/statistics", { fixture: matchId });
-const fetchFixtureLineups = async (matchId) => requestApiSports("/fixtures/lineups", { fixture: matchId });
-
-const buildScore = (fixture) => ({
-  home: fixture?.goals?.home ?? null,
-  away: fixture?.goals?.away ?? null
-});
+const fetchFixtureEvents = async (fixtureId) => requestApiSports("/fixtures/events", { fixture: fixtureId });
+const fetchFixtureStatistics = async (fixtureId) => requestApiSports("/fixtures/statistics", { fixture: fixtureId });
+const fetchFixtureLineups = async (fixtureId) => requestApiSports("/fixtures/lineups", { fixture: fixtureId });
 
 const transformFixture = (fixture, fallbackLeagueCode = null, fallbackLeagueName = null) => {
-  const matchId = fixture?.fixture?.id;
+  const fixtureId = fixture?.fixture?.id;
   const shortStatus = fixture?.fixture?.status?.short || null;
   const venueName = fixture?.fixture?.venue?.name || null;
 
   return {
-    matchId,
-    apiMatchId: matchId,
-    league: fixture?.league?.name || fallbackLeagueName || "Unknown League",
-    leagueId: fixture?.league?.id ?? null,
+    fixtureId,
     leagueCode: fallbackLeagueCode,
-    leagueLogo: fixture?.league?.logo || null,
-    country: fixture?.league?.country || null,
-    countryFlag: fixture?.league?.flag || null,
-    season: fixture?.league?.season ?? null,
-    round: fixture?.league?.round || null,
-    stadium: venueName,
-    venue: venueName,
-    city: fixture?.fixture?.venue?.city || null,
-    referee: fixture?.fixture?.referee || null,
-    homeTeam: fixture?.teams?.home?.name || "Unknown",
-    homeTeamId: fixture?.teams?.home?.id ?? null,
-    homeTeamLogo: fixture?.teams?.home?.logo || null,
-    awayTeam: fixture?.teams?.away?.name || "Unknown",
-    awayTeamId: fixture?.teams?.away?.id ?? null,
-    awayTeamLogo: fixture?.teams?.away?.logo || null,
-    score: buildScore(fixture),
-    homeScore: fixture?.goals?.home ?? null,
-    awayScore: fixture?.goals?.away ?? null,
+    league: {
+      leagueId: fixture?.league?.id ?? null,
+      season: fixture?.league?.season ?? getCurrentSeason(),
+      name: fixture?.league?.name || fallbackLeagueName || "Unknown League",
+      country: fixture?.league?.country || null,
+      logo: fixture?.league?.logo || null,
+      flag: fixture?.league?.flag || null
+    },
+    homeTeam: {
+      teamId: fixture?.teams?.home?.id ?? null,
+      name: fixture?.teams?.home?.name || "Unknown",
+      logo: fixture?.teams?.home?.logo || null
+    },
+    awayTeam: {
+      teamId: fixture?.teams?.away?.id ?? null,
+      name: fixture?.teams?.away?.name || "Unknown",
+      logo: fixture?.teams?.away?.logo || null
+    },
+    date: fixture?.fixture?.date ? new Date(fixture.fixture.date) : null,
     status: mapStatus(shortStatus),
     statusShort: shortStatus,
     minute: fixture?.fixture?.status?.elapsed ?? null,
-    date: fixture?.fixture?.date ? new Date(fixture.fixture.date) : null,
-    updatedAt: new Date()
+    referee: fixture?.fixture?.referee || null,
+    round: fixture?.league?.round || null,
+    stadium: venueName,
+    city: fixture?.fixture?.venue?.city || null,
+    goals: {
+      home: fixture?.goals?.home ?? null,
+      away: fixture?.goals?.away ?? null
+    }
   };
 };
 
-const isMeaningfulChange = (existing, nextMatch) => {
+const mapEventForStorage = (event) => ({
+  eventId: `${event?.time?.elapsed || 0}-${event?.team?.id || 0}-${event?.player?.id || 0}-${event?.type || "event"}-${event?.detail || ""}`,
+  minute: event?.time?.elapsed ?? null,
+  extraMinute: event?.time?.extra ?? null,
+  teamId: event?.team?.id ?? null,
+  teamName: event?.team?.name || null,
+  playerId: event?.player?.id ?? null,
+  playerName: event?.player?.name || null,
+  assistId: event?.assist?.id ?? null,
+  assistName: event?.assist?.name || null,
+  type: event?.type || null,
+  detail: event?.detail || null,
+  comments: event?.comments || null
+});
+
+const isDynamicChange = (existing, nextPayload) => {
   if (!existing) return true;
 
   return (
-    existing.homeScore !== nextMatch.homeScore ||
-    existing.awayScore !== nextMatch.awayScore ||
-    existing.status !== nextMatch.status ||
-    existing.statusShort !== nextMatch.statusShort ||
-    existing.minute !== nextMatch.minute ||
-    existing.referee !== nextMatch.referee ||
-    existing.round !== nextMatch.round ||
-    existing.stadium !== nextMatch.stadium ||
-    existing.city !== nextMatch.city ||
-    existing.homeTeam !== nextMatch.homeTeam ||
-    existing.awayTeam !== nextMatch.awayTeam ||
-    existing.homeTeamLogo !== nextMatch.homeTeamLogo ||
-    existing.awayTeamLogo !== nextMatch.awayTeamLogo ||
-    existing.country !== nextMatch.country ||
-    existing.league !== nextMatch.league ||
-    String(existing.date) !== String(nextMatch.date)
+    existing.status !== nextPayload.status ||
+    existing.statusShort !== nextPayload.statusShort ||
+    existing.minute !== nextPayload.minute ||
+    existing.homeScore !== nextPayload.homeScore ||
+    existing.awayScore !== nextPayload.awayScore ||
+    String(existing.date) !== String(nextPayload.date) ||
+    existing.referee !== nextPayload.referee ||
+    existing.round !== nextPayload.round ||
+    existing.stadium !== nextPayload.stadium ||
+    existing.city !== nextPayload.city
   );
 };
 
-const upsertMatch = async (match) => Match.findOneAndUpdate(
-  {
-    $or: [
-      { matchId: match.matchId },
-      { apiMatchId: match.matchId }
-    ]
-  },
-  { $set: match },
-  {
-    upsert: true,
-    new: true,
-    setDefaultsOnInsert: true,
-    lean: true
-  }
-);
+const upsertTeam = async (teamPayload) => {
+  if (!teamPayload?.teamId) return null;
+
+  return Team.findOneAndUpdate(
+    { teamId: teamPayload.teamId },
+    {
+      $set: {
+        name: teamPayload.name,
+        logo: teamPayload.logo || null,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date()
+      }
+    },
+    { upsert: true, new: true, lean: true }
+  );
+};
+
+const upsertLeague = async (leaguePayload) => {
+  if (!leaguePayload?.leagueId || !leaguePayload?.season) return null;
+
+  return League.findOneAndUpdate(
+    {
+      leagueId: leaguePayload.leagueId,
+      season: leaguePayload.season
+    },
+    {
+      $set: {
+        name: leaguePayload.name,
+        country: leaguePayload.country || null,
+        logo: leaguePayload.logo || null,
+        flag: leaguePayload.flag || null,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date()
+      }
+    },
+    { upsert: true, new: true, lean: true }
+  );
+};
 
 const mergeFixtures = (fixtures, leagueCode, leagueName, bucket) => {
   fixtures.forEach((fixture) => {
     const transformed = transformFixture(fixture, leagueCode, leagueName);
-    if (!transformed.matchId || !transformed.date) return;
+    if (!transformed.fixtureId || !transformed.date) return;
 
-    const existing = bucket.get(transformed.matchId);
+    const existing = bucket.get(transformed.fixtureId);
     if (!existing || transformed.status === "live" || existing.status !== "live") {
-      bucket.set(transformed.matchId, transformed);
+      bucket.set(transformed.fixtureId, transformed);
     }
   });
 };
 
-const syncMatches = async (matches, io, emitUpdates = false) => {
+const syncMatches = async (matches, io, emitUpdates = false, includeLiveEvents = false) => {
   let upserted = 0;
   let emitted = 0;
 
-  for (const match of matches) {
-    if (!match?.matchId || !match?.date) continue;
+  const teamCache = new Map();
+  const leagueCache = new Map();
 
-    const existing = await Match.findOne({ matchId: match.matchId }).lean();
-    if (!isMeaningfulChange(existing, match)) {
+  for (const incoming of matches) {
+    if (!incoming?.fixtureId || !incoming?.date) continue;
+
+    const homeTeamKey = incoming.homeTeam?.teamId;
+    const awayTeamKey = incoming.awayTeam?.teamId;
+    const leagueKey = `${incoming.league?.leagueId || ""}-${incoming.league?.season || ""}`;
+
+    let homeTeamDoc = homeTeamKey ? teamCache.get(homeTeamKey) : null;
+    if (!homeTeamDoc && homeTeamKey) {
+      homeTeamDoc = await upsertTeam(incoming.homeTeam);
+      if (homeTeamDoc) teamCache.set(homeTeamKey, homeTeamDoc);
+    }
+
+    let awayTeamDoc = awayTeamKey ? teamCache.get(awayTeamKey) : null;
+    if (!awayTeamDoc && awayTeamKey) {
+      awayTeamDoc = await upsertTeam(incoming.awayTeam);
+      if (awayTeamDoc) teamCache.set(awayTeamKey, awayTeamDoc);
+    }
+
+    let leagueDoc = leagueCache.get(leagueKey);
+    if (!leagueDoc && incoming.league?.leagueId && incoming.league?.season) {
+      leagueDoc = await upsertLeague(incoming.league);
+      if (leagueDoc) leagueCache.set(leagueKey, leagueDoc);
+    }
+
+    if (!homeTeamDoc?._id || !awayTeamDoc?._id || !leagueDoc?._id) {
       continue;
     }
 
-    const saved = await upsertMatch(match);
+    let events = [];
+    if (includeLiveEvents && incoming.status === "live") {
+      const liveEvents = await fetchFixtureEvents(incoming.fixtureId);
+      events = liveEvents.map(mapEventForStorage);
+    }
+
+    const payload = {
+      fixtureId: incoming.fixtureId,
+      matchId: incoming.fixtureId,
+      apiMatchId: incoming.fixtureId,
+      date: incoming.date,
+      status: incoming.status,
+      statusShort: incoming.statusShort,
+      minute: incoming.minute,
+      referee: incoming.referee,
+      round: incoming.round,
+      stadium: incoming.stadium,
+      city: incoming.city,
+      homeTeamRef: homeTeamDoc._id,
+      awayTeamRef: awayTeamDoc._id,
+      leagueRef: leagueDoc._id,
+      goals: incoming.goals,
+      score: incoming.goals,
+      homeScore: incoming.goals?.home ?? null,
+      awayScore: incoming.goals?.away ?? null,
+      events,
+      updatedAt: new Date()
+    };
+
+    const existing = await Match.findOne({
+      $or: [
+        { fixtureId: incoming.fixtureId },
+        { matchId: incoming.fixtureId },
+        { apiMatchId: incoming.fixtureId }
+      ]
+    }).lean();
+
+    if (!isDynamicChange(existing, payload) && !(includeLiveEvents && incoming.status === "live")) {
+      continue;
+    }
+
+    const saved = await Match.findOneAndUpdate(
+      {
+        $or: [
+          { fixtureId: incoming.fixtureId },
+          { matchId: incoming.fixtureId },
+          { apiMatchId: incoming.fixtureId }
+        ]
+      },
+      {
+        $set: payload,
+        $setOnInsert: {
+          createdAt: new Date()
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true, lean: true }
+    );
+
     upserted += 1;
 
     if (emitUpdates && io) {
@@ -262,7 +380,7 @@ const importLeagueMatches = async (leagueCode, io = null) => {
     mergeFixtures(fixtures, leagueCode, league.name, bucket);
     mergeFixtures(relevantLiveFixtures, leagueCode, league.name, bucket);
 
-    const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io));
+    const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io), true);
 
     return {
       success: true,
@@ -300,7 +418,7 @@ const importAllMatches = async (io = null) => {
       mergeFixtures(fixtures, leagueCode, league.name, bucket);
       mergeFixtures(relevantLiveFixtures, leagueCode, league.name, bucket);
 
-      const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io));
+      const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io), false);
       total += upserted;
       totalEmitted += emitted;
 
@@ -342,9 +460,9 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
           matchingLeague?.[1]?.name || fixture?.league?.name || null
         );
       })
-      .filter((match) => match.matchId && match.date && match.status === "live");
+      .filter((match) => match.fixtureId && match.date && match.status === "live");
 
-    const { upserted, emitted } = await syncMatches(transformedMatches, io, true);
+    const { upserted, emitted } = await syncMatches(transformedMatches, io, true, true);
     console.log(`[live-poll] checked ${transformedMatches.length}, upserted ${upserted}, emitted ${emitted}`);
 
     return {
@@ -382,15 +500,82 @@ const getSupportedLeagues = () => Object.entries(LEAGUES).map(([code, league]) =
   name: league.name
 }));
 
-const findStoredMatchById = async (matchId) => Match.findOne({
-  $or: [
-    { matchId },
-    { apiMatchId: matchId }
-  ]
-}).lean();
+const serializeMatch = (matchDoc) => {
+  if (!matchDoc) return null;
 
-const mapEvent = (event) => ({
-  id: `${event?.time?.elapsed || 0}-${event?.team?.id || 0}-${event?.player?.id || 0}-${event?.type || "event"}`,
+  const homeTeam = matchDoc.homeTeamRef || {};
+  const awayTeam = matchDoc.awayTeamRef || {};
+  const league = matchDoc.leagueRef || {};
+
+  return {
+    _id: matchDoc._id,
+    fixtureId: matchDoc.fixtureId,
+    matchId: matchDoc.fixtureId,
+    apiMatchId: matchDoc.fixtureId,
+    date: matchDoc.date,
+    status: matchDoc.status,
+    statusShort: matchDoc.statusShort,
+    minute: matchDoc.minute,
+    homeTeamId: homeTeam.teamId || null,
+    homeTeam: homeTeam.name || "Unknown",
+    homeTeamLogo: homeTeam.logo || null,
+    awayTeamId: awayTeam.teamId || null,
+    awayTeam: awayTeam.name || "Unknown",
+    awayTeamLogo: awayTeam.logo || null,
+    leagueId: league.leagueId || null,
+    league: league.name || "Unknown League",
+    leagueLogo: league.logo || null,
+    country: league.country || null,
+    countryFlag: league.flag || null,
+    season: league.season || null,
+    round: matchDoc.round || null,
+    stadium: matchDoc.stadium || null,
+    venue: matchDoc.stadium || null,
+    city: matchDoc.city || null,
+    referee: matchDoc.referee || null,
+    score: matchDoc.score || { home: null, away: null },
+    goals: matchDoc.goals || { home: null, away: null },
+    homeScore: matchDoc.homeScore ?? matchDoc.goals?.home ?? null,
+    awayScore: matchDoc.awayScore ?? matchDoc.goals?.away ?? null,
+    events: Array.isArray(matchDoc.events) ? matchDoc.events : [],
+    updatedAt: matchDoc.updatedAt
+  };
+};
+
+const buildMatchQueryById = (fixtureId) => ({
+  $or: [
+    { fixtureId },
+    { matchId: fixtureId },
+    { apiMatchId: fixtureId }
+  ]
+});
+
+const findStoredMatchById = async (fixtureId) => {
+  const match = await Match.findOne(buildMatchQueryById(fixtureId))
+    .populate("homeTeamRef")
+    .populate("awayTeamRef")
+    .populate("leagueRef")
+    .lean();
+
+  return serializeMatch(match);
+};
+
+const getMatchDetails = async (fixtureId) => {
+  const fixture = await fetchFixtureById(fixtureId);
+  if (fixture) {
+    const transformed = transformFixture(fixture);
+    const hydrated = await syncMatches([transformed], null, false, true);
+    if (hydrated.upserted >= 0) {
+      const stored = await findStoredMatchById(fixtureId);
+      if (stored) return stored;
+    }
+  }
+
+  return findStoredMatchById(fixtureId);
+};
+
+const mapEventResponse = (event) => ({
+  id: `${event?.time?.elapsed || 0}-${event?.team?.id || 0}-${event?.player?.id || 0}-${event?.type || "event"}-${event?.detail || ""}`,
   minute: event?.time?.elapsed ?? null,
   extraMinute: event?.time?.extra ?? null,
   team: {
@@ -411,6 +596,19 @@ const mapEvent = (event) => ({
   comments: event?.comments || null
 });
 
+const getMatchEvents = async (fixtureId) => {
+  const events = await fetchFixtureEvents(fixtureId);
+  const mapped = events.map(mapEventResponse);
+
+  await Match.findOneAndUpdate(
+    buildMatchQueryById(fixtureId),
+    { $set: { events: mapped.map(mapEventForStorage), updatedAt: new Date() } },
+    { new: false }
+  );
+
+  return mapped;
+};
+
 const mapStatistics = (teamStats) => ({
   team: {
     id: teamStats?.team?.id ?? null,
@@ -424,6 +622,11 @@ const mapStatistics = (teamStats) => ({
       }))
     : []
 });
+
+const getMatchStatistics = async (fixtureId) => {
+  const statistics = await fetchFixtureStatistics(fixtureId);
+  return statistics.map(mapStatistics);
+};
 
 const mapLineupPlayers = (items = []) => items.map((entry) => ({
   id: entry?.player?.id ?? null,
@@ -450,28 +653,20 @@ const mapLineup = (lineup) => ({
   substitutes: mapLineupPlayers(lineup?.substitutes)
 });
 
-const getMatchDetails = async (matchId) => {
-  const fixture = await fetchFixtureById(matchId);
-  if (fixture) {
-    return transformFixture(fixture);
-  }
-
-  return findStoredMatchById(matchId);
-};
-
-const getMatchEvents = async (matchId) => {
-  const events = await fetchFixtureEvents(matchId);
-  return events.map(mapEvent);
-};
-
-const getMatchStatistics = async (matchId) => {
-  const statistics = await fetchFixtureStatistics(matchId);
-  return statistics.map(mapStatistics);
-};
-
-const getMatchLineups = async (matchId) => {
-  const lineups = await fetchFixtureLineups(matchId);
+const getMatchLineups = async (fixtureId) => {
+  const lineups = await fetchFixtureLineups(fixtureId);
   return lineups.map(mapLineup);
+};
+
+const listMatches = async (query = {}) => {
+  const matches = await Match.find(query)
+    .populate("homeTeamRef")
+    .populate("awayTeamRef")
+    .populate("leagueRef")
+    .sort({ date: 1 })
+    .lean();
+
+  return matches.map(serializeMatch);
 };
 
 module.exports = {
@@ -485,6 +680,7 @@ module.exports = {
   getMatchStatistics,
   getMatchLineups,
   findStoredMatchById,
+  listMatches,
   LEAGUES,
   LIVE_STATUSES
 };

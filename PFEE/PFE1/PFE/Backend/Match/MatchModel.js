@@ -11,100 +11,76 @@ const TeamScoreSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+const MatchEventSchema = new mongoose.Schema({
+  eventId: {
+    type: String,
+    required: true
+  },
+  minute: {
+    type: Number,
+    default: null
+  },
+  extraMinute: {
+    type: Number,
+    default: null
+  },
+  teamId: {
+    type: Number,
+    default: null
+  },
+  teamName: {
+    type: String,
+    default: null
+  },
+  playerId: {
+    type: Number,
+    default: null
+  },
+  playerName: {
+    type: String,
+    default: null
+  },
+  assistId: {
+    type: Number,
+    default: null
+  },
+  assistName: {
+    type: String,
+    default: null
+  },
+  type: {
+    type: String,
+    default: null
+  },
+  detail: {
+    type: String,
+    default: null
+  },
+  comments: {
+    type: String,
+    default: null
+  }
+}, { _id: false });
+
 const MatchSchema = new mongoose.Schema({
-  matchId: {
+  fixtureId: {
     type: Number,
     required: true,
     unique: true,
+    index: true
+  },
+  matchId: {
+    type: Number,
     index: true
   },
   apiMatchId: {
     type: Number,
     index: true
   },
-  league: {
-    type: String,
-    required: true
-  },
-  leagueId: {
-    type: Number,
-    default: null
-  },
-  leagueCode: {
-    type: String,
-    default: null
-  },
-  leagueLogo: {
-    type: String,
-    default: null
-  },
-  country: {
-    type: String,
-    default: null
-  },
-  countryFlag: {
-    type: String,
-    default: null
-  },
-  season: {
-    type: Number,
-    default: null
-  },
-  round: {
-    type: String,
-    default: null
-  },
-  stadium: {
-    type: String,
-    default: null
-  },
-  venue: {
-    type: String,
-    default: null
-  },
-  city: {
-    type: String,
-    default: null
-  },
-  referee: {
-    type: String,
-    default: null
-  },
-  homeTeam: {
-    type: String,
-    required: true
-  },
-  homeTeamId: {
-    type: Number,
-    default: null
-  },
-  homeTeamLogo: {
-    type: String,
-    default: null
-  },
-  awayTeam: {
-    type: String,
-    required: true
-  },
-  awayTeamId: {
-    type: Number,
-    default: null
-  },
-  awayTeamLogo: {
-    type: String,
-    default: null
-  },
-  score: {
-    type: TeamScoreSchema,
-    default: () => ({})
-  },
-  homeScore: {
-    type: Number,
-    default: null
-  },
-  awayScore: {
-    type: Number,
-    default: null
+  date: {
+    type: Date,
+    required: true,
+    index: true
   },
   status: {
     type: String,
@@ -121,10 +97,59 @@ const MatchSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
-  date: {
-    type: Date,
+  referee: {
+    type: String,
+    default: null
+  },
+  round: {
+    type: String,
+    default: null
+  },
+  stadium: {
+    type: String,
+    default: null
+  },
+  city: {
+    type: String,
+    default: null
+  },
+  homeTeamRef: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Team",
     required: true,
     index: true
+  },
+  awayTeamRef: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Team",
+    required: true,
+    index: true
+  },
+  leagueRef: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "League",
+    required: true,
+    index: true
+  },
+  goals: {
+    type: TeamScoreSchema,
+    default: () => ({})
+  },
+  score: {
+    type: TeamScoreSchema,
+    default: () => ({})
+  },
+  homeScore: {
+    type: Number,
+    default: null
+  },
+  awayScore: {
+    type: Number,
+    default: null
+  },
+  events: {
+    type: [MatchEventSchema],
+    default: []
   },
   updatedAt: {
     type: Date,
@@ -135,5 +160,11 @@ const MatchSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+MatchSchema.index({ status: 1, date: 1 });
+MatchSchema.index({ leagueRef: 1, date: 1 });
+MatchSchema.index({ homeTeamRef: 1, date: 1 });
+MatchSchema.index({ awayTeamRef: 1, date: 1 });
+MatchSchema.index({ updatedAt: -1 });
 
 module.exports = mongoose.model("Match", MatchSchema);

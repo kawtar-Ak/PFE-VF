@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
-const Match = require("../Match/MatchModel");
+const Match = require("./MatchModel");
+const Team = require("./TeamModel");
+const League = require("./LeagueModel");
 const {
   importAllMatches,
   importLeagueMatches,
@@ -10,6 +12,7 @@ const {
   getMatchEvents,
   getMatchStatistics,
   getMatchLineups,
+  listMatches,
   LIVE_STATUSES
 } = require("../Match/importService");
 
@@ -18,53 +21,84 @@ const parseMatchId = (value) => {
   return Number.isInteger(parsed) ? parsed : null;
 };
 
-const scoreMatchQuality = (match) => {
-  const hasHomeLogo = Boolean(match?.homeTeamLogo);
-  const hasAwayLogo = Boolean(match?.awayTeamLogo);
-  const hasStatusShort = Boolean(match?.statusShort);
-  const hasMatchId = Boolean(match?.matchId);
-  const updatedAt = match?.updatedAt ? new Date(match.updatedAt).getTime() : 0;
+// GET DB integrity/health summary
+router.get("/health/db", async (req, res) => {
+  try {
+    const [matchCount, teamCount, leagueCount] = await Promise.all([
+      Match.countDocuments(),
+      Team.countDocuments(),
+      League.countDocuments()
+    ]);
 
-  let score = 0;
-  if (hasHomeLogo) score += 4;
-  if (hasAwayLogo) score += 4;
-  if (hasStatusShort) score += 2;
-  if (hasMatchId) score += 1;
+    const [missingHomeRef, missingAwayRef, missingLeagueRef] = await Promise.all([
+      Match.countDocuments({ homeTeamRef: { $exists: false } }),
+      Match.countDocuments({ awayTeamRef: { $exists: false } }),
+      Match.countDocuments({ leagueRef: { $exists: false } })
+    ]);
 
-  return { score, updatedAt };
-};
+    const danglingHomeLookup = await Match.aggregate([
+      { $match: { homeTeamRef: { $type: "objectId" } } },
+      { $lookup: { from: "teams", localField: "homeTeamRef", foreignField: "_id", as: "homeTeamJoin" } },
+      { $match: { homeTeamJoin: { $size: 0 } } },
+      { $count: "count" }
+    ]);
 
-const dedupeMatches = (matches) => {
-  const bestByKey = new Map();
+    const danglingAwayLookup = await Match.aggregate([
+      { $match: { awayTeamRef: { $type: "objectId" } } },
+      { $lookup: { from: "teams", localField: "awayTeamRef", foreignField: "_id", as: "awayTeamJoin" } },
+      { $match: { awayTeamJoin: { $size: 0 } } },
+      { $count: "count" }
+    ]);
 
-  matches.forEach((match) => {
-    const key = match?.matchId || match?.apiMatchId || String(match?._id);
-    const currentBest = bestByKey.get(key);
+    const danglingLeagueLookup = await Match.aggregate([
+      { $match: { leagueRef: { $type: "objectId" } } },
+      { $lookup: { from: "leagues", localField: "leagueRef", foreignField: "_id", as: "leagueJoin" } },
+      { $match: { leagueJoin: { $size: 0 } } },
+      { $count: "count" }
+    ]);
 
-    if (!currentBest) {
-      bestByKey.set(key, match);
-      return;
-    }
+    const danglingHomeRef = danglingHomeLookup[0]?.count || 0;
+    const danglingAwayRef = danglingAwayLookup[0]?.count || 0;
+    const danglingLeagueRef = danglingLeagueLookup[0]?.count || 0;
 
-    const nextQuality = scoreMatchQuality(match);
-    const bestQuality = scoreMatchQuality(currentBest);
+    const issues =
+      missingHomeRef +
+      missingAwayRef +
+      missingLeagueRef +
+      danglingHomeRef +
+      danglingAwayRef +
+      danglingLeagueRef;
 
-    if (
-      nextQuality.score > bestQuality.score ||
-      (nextQuality.score === bestQuality.score && nextQuality.updatedAt > bestQuality.updatedAt)
-    ) {
-      bestByKey.set(key, match);
-    }
-  });
-
-  return [...bestByKey.values()].sort((left, right) => new Date(left.date) - new Date(right.date));
-};
+    res.status(200).json({
+      ok: issues === 0,
+      counts: {
+        matches: matchCount,
+        teams: teamCount,
+        leagues: leagueCount
+      },
+      integrity: {
+        missingRefs: {
+          homeTeamRef: missingHomeRef,
+          awayTeamRef: missingAwayRef,
+          leagueRef: missingLeagueRef
+        },
+        danglingRefs: {
+          homeTeamRef: danglingHomeRef,
+          awayTeamRef: danglingAwayRef,
+          leagueRef: danglingLeagueRef
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
 
 // GET all matches
 router.get("/", async (req, res) => {
   try {
-    const matches = await Match.find().sort({ date: 1 }).lean();
-    res.status(200).json({ matches: dedupeMatches(matches) });
+    const matches = await listMatches();
+    res.status(200).json({ matches });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -73,12 +107,12 @@ router.get("/", async (req, res) => {
 // GET live matches only
 router.get("/live", async (req, res) => {
   try {
-    const matches = await Match.find({
+    const matches = await listMatches({
       status: "live",
       statusShort: { $in: [...LIVE_STATUSES] }
-    }).sort({ date: 1 }).lean();
+    });
 
-    res.status(200).json({ matches: dedupeMatches(matches) });
+    res.status(200).json({ matches });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -96,14 +130,14 @@ router.get("/by-date", async (req, res) => {
     const startOfDay = new Date(`${date}T00:00:00.000Z`);
     const endOfDay = new Date(`${date}T23:59:59.999Z`);
 
-    const matches = await Match.find({
+    const matches = await listMatches({
       date: {
         $gte: startOfDay,
         $lte: endOfDay
       }
-    }).sort({ date: 1 }).lean();
+    });
 
-    res.status(200).json({ matches: dedupeMatches(matches) });
+    res.status(200).json({ matches });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -112,8 +146,9 @@ router.get("/by-date", async (req, res) => {
 // GET matches by league
 router.get("/league/:league", async (req, res) => {
   try {
-    const matches = await Match.find({ league: req.params.league }).sort({ date: 1 }).lean();
-    res.status(200).json({ matches: dedupeMatches(matches) });
+    const allMatches = await listMatches();
+    const matches = allMatches.filter((match) => match.league === req.params.league);
+    res.status(200).json({ matches });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
