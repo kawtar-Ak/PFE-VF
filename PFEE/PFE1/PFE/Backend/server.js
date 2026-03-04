@@ -17,8 +17,8 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/PFE";
-const LIVE_POLL_INTERVAL_MS = Number(process.env.LIVE_POLL_INTERVAL_MS || 15000);
-const SCHEDULED_POLL_INTERVAL_MS = Number(process.env.SCHEDULED_POLL_INTERVAL_MS || 90000);
+const LIVE_POLL_INTERVAL_MS = Number(process.env.LIVE_POLL_INTERVAL_MS || 60000);
+const SCHEDULED_POLL_INTERVAL_MS = Number(process.env.SCHEDULED_POLL_INTERVAL_MS || 60000);
 
 const io = initSocket(server);
 
@@ -74,6 +74,7 @@ mongoose
 
 app.use("/api/user", userRoutes);
 app.use("/api/match", matchRoutes);
+app.use("/api/matches", matchRoutes);
 
 app.get("/", (req, res) => {
   res.json({ status: "Server is running" });

@@ -5,8 +5,18 @@ const {
   importAllMatches,
   importLeagueMatches,
   pollLiveMatchesAndEmitUpdates,
-  getSupportedLeagues
+  getSupportedLeagues,
+  getMatchDetails,
+  getMatchEvents,
+  getMatchStatistics,
+  getMatchLineups,
+  LIVE_STATUSES
 } = require("../Match/importService");
+
+const parseMatchId = (value) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+};
 
 // GET all matches
 router.get("/", async (req, res) => {
@@ -21,7 +31,11 @@ router.get("/", async (req, res) => {
 // GET live matches only
 router.get("/live", async (req, res) => {
   try {
-    const matches = await Match.find({ status: "live" }).sort({ date: 1 });
+    const matches = await Match.find({
+      status: "live",
+      statusShort: { $in: [...LIVE_STATUSES] }
+    }).sort({ date: 1 });
+
     res.status(200).json({ matches });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -98,6 +112,66 @@ router.post("/import/:leagueCode", async (req, res) => {
   try {
     const result = await importLeagueMatches(req.params.leagueCode);
     res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/:id/events", async (req, res) => {
+  try {
+    const matchId = parseMatchId(req.params.id);
+    if (!matchId) {
+      return res.status(400).json({ error: "Invalid match id" });
+    }
+
+    const events = await getMatchEvents(matchId);
+    res.status(200).json({ events });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/:id/statistics", async (req, res) => {
+  try {
+    const matchId = parseMatchId(req.params.id);
+    if (!matchId) {
+      return res.status(400).json({ error: "Invalid match id" });
+    }
+
+    const statistics = await getMatchStatistics(matchId);
+    res.status(200).json({ statistics });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/:id/lineups", async (req, res) => {
+  try {
+    const matchId = parseMatchId(req.params.id);
+    if (!matchId) {
+      return res.status(400).json({ error: "Invalid match id" });
+    }
+
+    const lineups = await getMatchLineups(matchId);
+    res.status(200).json({ lineups });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/:id", async (req, res) => {
+  try {
+    const matchId = parseMatchId(req.params.id);
+    if (!matchId) {
+      return res.status(400).json({ error: "Invalid match id" });
+    }
+
+    const match = await getMatchDetails(matchId);
+    if (!match) {
+      return res.status(404).json({ error: "Match not found" });
+    }
+
+    res.status(200).json({ match });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

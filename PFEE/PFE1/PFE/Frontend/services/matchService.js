@@ -50,6 +50,50 @@ export const matchService = {
     }
   },
 
+  getMatchById: async (matchId) => {
+    try {
+      const response = await fetch(`${API_URL}/${matchId}`);
+      const data = await response.json();
+      return data.match || null;
+    } catch (error) {
+      console.error('Error:', error);
+      return null;
+    }
+  },
+
+  getMatchEvents: async (matchId) => {
+    try {
+      const response = await fetch(`${API_URL}/${matchId}/events`);
+      const data = await response.json();
+      return data.events || [];
+    } catch (error) {
+      console.error('Error:', error);
+      return [];
+    }
+  },
+
+  getMatchStatistics: async (matchId) => {
+    try {
+      const response = await fetch(`${API_URL}/${matchId}/statistics`);
+      const data = await response.json();
+      return data.statistics || [];
+    } catch (error) {
+      console.error('Error:', error);
+      return [];
+    }
+  },
+
+  getMatchLineups: async (matchId) => {
+    try {
+      const response = await fetch(`${API_URL}/${matchId}/lineups`);
+      const data = await response.json();
+      return data.lineups || [];
+    } catch (error) {
+      console.error('Error:', error);
+      return [];
+    }
+  },
+
   getSupportedLeagues: async () => {
     try {
       const response = await fetch(`${API_URL}/import/leagues`);

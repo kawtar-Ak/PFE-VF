@@ -1,5 +1,5 @@
 const fetch = (...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+  import("node-fetch").then(({ default: fetchImpl }) => fetchImpl(...args));
 
 const Match = require("./MatchModel");
 
@@ -8,6 +8,9 @@ const API_SPORTS_KEY = process.env.APISPORTS_KEY;
 const IMPORT_TIMEZONE = process.env.MATCH_TIMEZONE || "Europe/Paris";
 const IMPORT_PAST_DAYS = Number(process.env.MATCH_IMPORT_PAST_DAYS || 1);
 const IMPORT_FUTURE_DAYS = Number(process.env.MATCH_IMPORT_FUTURE_DAYS || 3);
+
+const LIVE_STATUSES = new Set(["1H", "2H", "HT", "ET", "P"]);
+const FINISHED_STATUSES = new Set(["FT", "AET", "PEN"]);
 
 const LEAGUES = {
   PL: { id: 39, name: "Premier League" },
@@ -20,9 +23,6 @@ const LEAGUES = {
   CL: { id: 2, name: "Champions League" },
   EL: { id: 3, name: "Europa League" }
 };
-
-const LIVE_STATUS = new Set(["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"]);
-const FINISHED_STATUS = new Set(["FT", "AET", "PEN"]);
 
 let importAllInProgress = false;
 let livePollInProgress = false;
@@ -56,18 +56,18 @@ const getDateWindow = () => {
 };
 
 const mapStatus = (shortStatus = "") => {
-  if (LIVE_STATUS.has(shortStatus)) return "live";
-  if (FINISHED_STATUS.has(shortStatus)) return "finished";
+  if (LIVE_STATUSES.has(shortStatus)) return "live";
+  if (FINISHED_STATUSES.has(shortStatus)) return "finished";
   return "scheduled";
 };
 
-const requestFixtures = async (params) => {
+const requestApiSports = async (path, params = {}) => {
   if (!API_SPORTS_KEY) {
     console.warn("API_SPORTS_KEY not configured.");
     return [];
   }
 
-  const url = new URL(`${API_SPORTS_BASE_URL}/fixtures`);
+  const url = new URL(`${API_SPORTS_BASE_URL}${path}`);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, String(value));
@@ -84,8 +84,7 @@ const requestFixtures = async (params) => {
     }
 
     const payload = await response.json();
-
-    if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    if (payload?.errors && Object.keys(payload.errors).length > 0) {
       console.error("API-Sports payload errors:", payload.errors);
       return [];
     }
@@ -104,7 +103,7 @@ const fetchLeagueFixtures = async (leagueCode) => {
   const season = getCurrentSeason();
   const { from, to } = getDateWindow();
 
-  return requestFixtures({
+  return requestApiSports("/fixtures", {
     league: league.id,
     season,
     from,
@@ -113,23 +112,61 @@ const fetchLeagueFixtures = async (leagueCode) => {
   });
 };
 
-const fetchLiveFixtures = async () => requestFixtures({
+const fetchLiveFixtures = async () => requestApiSports("/fixtures", {
   live: "all",
   timezone: IMPORT_TIMEZONE
 });
 
-const transformFixture = (fixture, fallbackLeagueCode = null, fallbackLeagueName = null) => ({
-  apiMatchId: fixture?.fixture?.id,
-  homeTeam: fixture?.teams?.home?.name || "Unknown",
-  awayTeam: fixture?.teams?.away?.name || "Unknown",
-  homeScore: fixture?.goals?.home ?? null,
-  awayScore: fixture?.goals?.away ?? null,
-  date: fixture?.fixture?.date ? new Date(fixture.fixture.date) : null,
-  league: fixture?.league?.name || fallbackLeagueName || "Unknown League",
-  leagueCode: fallbackLeagueCode,
-  status: mapStatus(fixture?.fixture?.status?.short),
-  updatedAt: new Date()
+const fetchFixtureById = async (matchId) => {
+  const [fixture] = await requestApiSports("/fixtures", { id: matchId, timezone: IMPORT_TIMEZONE });
+  return fixture || null;
+};
+
+const fetchFixtureEvents = async (matchId) => requestApiSports("/fixtures/events", { fixture: matchId });
+const fetchFixtureStatistics = async (matchId) => requestApiSports("/fixtures/statistics", { fixture: matchId });
+const fetchFixtureLineups = async (matchId) => requestApiSports("/fixtures/lineups", { fixture: matchId });
+
+const buildScore = (fixture) => ({
+  home: fixture?.goals?.home ?? null,
+  away: fixture?.goals?.away ?? null
 });
+
+const transformFixture = (fixture, fallbackLeagueCode = null, fallbackLeagueName = null) => {
+  const matchId = fixture?.fixture?.id;
+  const shortStatus = fixture?.fixture?.status?.short || null;
+  const venueName = fixture?.fixture?.venue?.name || null;
+
+  return {
+    matchId,
+    apiMatchId: matchId,
+    league: fixture?.league?.name || fallbackLeagueName || "Unknown League",
+    leagueId: fixture?.league?.id ?? null,
+    leagueCode: fallbackLeagueCode,
+    leagueLogo: fixture?.league?.logo || null,
+    country: fixture?.league?.country || null,
+    countryFlag: fixture?.league?.flag || null,
+    season: fixture?.league?.season ?? null,
+    round: fixture?.league?.round || null,
+    stadium: venueName,
+    venue: venueName,
+    city: fixture?.fixture?.venue?.city || null,
+    referee: fixture?.fixture?.referee || null,
+    homeTeam: fixture?.teams?.home?.name || "Unknown",
+    homeTeamId: fixture?.teams?.home?.id ?? null,
+    homeTeamLogo: fixture?.teams?.home?.logo || null,
+    awayTeam: fixture?.teams?.away?.name || "Unknown",
+    awayTeamId: fixture?.teams?.away?.id ?? null,
+    awayTeamLogo: fixture?.teams?.away?.logo || null,
+    score: buildScore(fixture),
+    homeScore: fixture?.goals?.home ?? null,
+    awayScore: fixture?.goals?.away ?? null,
+    status: mapStatus(shortStatus),
+    statusShort: shortStatus,
+    minute: fixture?.fixture?.status?.elapsed ?? null,
+    date: fixture?.fixture?.date ? new Date(fixture.fixture.date) : null,
+    updatedAt: new Date()
+  };
+};
 
 const isMeaningfulChange = (existing, nextMatch) => {
   if (!existing) return true;
@@ -138,34 +175,41 @@ const isMeaningfulChange = (existing, nextMatch) => {
     existing.homeScore !== nextMatch.homeScore ||
     existing.awayScore !== nextMatch.awayScore ||
     existing.status !== nextMatch.status ||
-    String(existing.date) !== String(nextMatch.date) ||
+    existing.statusShort !== nextMatch.statusShort ||
+    existing.minute !== nextMatch.minute ||
+    existing.referee !== nextMatch.referee ||
+    existing.round !== nextMatch.round ||
+    existing.stadium !== nextMatch.stadium ||
+    existing.city !== nextMatch.city ||
     existing.homeTeam !== nextMatch.homeTeam ||
     existing.awayTeam !== nextMatch.awayTeam ||
-    existing.league !== nextMatch.league
+    existing.homeTeamLogo !== nextMatch.homeTeamLogo ||
+    existing.awayTeamLogo !== nextMatch.awayTeamLogo ||
+    existing.country !== nextMatch.country ||
+    existing.league !== nextMatch.league ||
+    String(existing.date) !== String(nextMatch.date)
   );
 };
 
-const upsertMatch = async (match) => {
-  return Match.findOneAndUpdate(
-    { apiMatchId: match.apiMatchId },
-    { $set: match },
-    {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-      lean: true
-    }
-  );
-};
+const upsertMatch = async (match) => Match.findOneAndUpdate(
+  { matchId: match.matchId },
+  { $set: match },
+  {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: true,
+    lean: true
+  }
+);
 
 const mergeFixtures = (fixtures, leagueCode, leagueName, bucket) => {
   fixtures.forEach((fixture) => {
     const transformed = transformFixture(fixture, leagueCode, leagueName);
-    if (!transformed.apiMatchId || !transformed.date) return;
+    if (!transformed.matchId || !transformed.date) return;
 
-    const existing = bucket.get(transformed.apiMatchId);
+    const existing = bucket.get(transformed.matchId);
     if (!existing || transformed.status === "live" || existing.status !== "live") {
-      bucket.set(transformed.apiMatchId, transformed);
+      bucket.set(transformed.matchId, transformed);
     }
   });
 };
@@ -175,12 +219,10 @@ const syncMatches = async (matches, io, emitUpdates = false) => {
   let emitted = 0;
 
   for (const match of matches) {
-    if (!match?.apiMatchId || !match?.date) continue;
+    if (!match?.matchId || !match?.date) continue;
 
-    const existing = await Match.findOne({ apiMatchId: match.apiMatchId }).lean();
-    const changed = isMeaningfulChange(existing, match);
-
-    if (!changed) {
+    const existing = await Match.findOne({ matchId: match.matchId }).lean();
+    if (!isMeaningfulChange(existing, match)) {
       continue;
     }
 
@@ -232,20 +274,12 @@ const importLeagueMatches = async (leagueCode, io = null) => {
 
 const importAllMatches = async (io = null) => {
   if (importAllInProgress) {
-    return {
-      success: true,
-      message: "Import already running",
-      count: 0
-    };
+    return { success: true, message: "Import already running", count: 0 };
   }
 
   try {
     if (!API_SPORTS_KEY) {
-      return {
-        success: false,
-        message: "API_SPORTS_KEY not configured",
-        count: 0
-      };
+      return { success: false, message: "API_SPORTS_KEY not configured", count: 0 };
     }
 
     importAllInProgress = true;
@@ -276,11 +310,7 @@ const importAllMatches = async (io = null) => {
     };
   } catch (error) {
     console.error("importAllMatches error:", error);
-    return {
-      success: false,
-      message: error.message,
-      count: 0
-    };
+    return { success: false, message: error.message, count: 0 };
   } finally {
     importAllInProgress = false;
   }
@@ -307,7 +337,7 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
           matchingLeague?.[1]?.name || fixture?.league?.name || null
         );
       })
-      .filter((match) => match.apiMatchId && match.date);
+      .filter((match) => match.matchId && match.date && match.status === "live");
 
     const { upserted, emitted } = await syncMatches(transformedMatches, io, true);
     console.log(`[live-poll] checked ${transformedMatches.length}, upserted ${upserted}, emitted ${emitted}`);
@@ -320,12 +350,7 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
     };
   } catch (error) {
     console.error("pollLiveMatchesAndEmitUpdates error:", error);
-    return {
-      success: false,
-      message: error.message,
-      count: 0,
-      emitted: 0
-    };
+    return { success: false, message: error.message, count: 0, emitted: 0 };
   } finally {
     livePollInProgress = false;
   }
@@ -352,11 +377,109 @@ const getSupportedLeagues = () => Object.entries(LEAGUES).map(([code, league]) =
   name: league.name
 }));
 
+const findStoredMatchById = async (matchId) => Match.findOne({
+  $or: [
+    { matchId },
+    { apiMatchId: matchId }
+  ]
+}).lean();
+
+const mapEvent = (event) => ({
+  id: `${event?.time?.elapsed || 0}-${event?.team?.id || 0}-${event?.player?.id || 0}-${event?.type || "event"}`,
+  minute: event?.time?.elapsed ?? null,
+  extraMinute: event?.time?.extra ?? null,
+  team: {
+    id: event?.team?.id ?? null,
+    name: event?.team?.name || null,
+    logo: event?.team?.logo || null
+  },
+  player: {
+    id: event?.player?.id ?? null,
+    name: event?.player?.name || null
+  },
+  assist: {
+    id: event?.assist?.id ?? null,
+    name: event?.assist?.name || null
+  },
+  type: event?.type || null,
+  detail: event?.detail || null,
+  comments: event?.comments || null
+});
+
+const mapStatistics = (teamStats) => ({
+  team: {
+    id: teamStats?.team?.id ?? null,
+    name: teamStats?.team?.name || null,
+    logo: teamStats?.team?.logo || null
+  },
+  statistics: Array.isArray(teamStats?.statistics)
+    ? teamStats.statistics.map((stat) => ({
+        type: stat?.type || null,
+        value: stat?.value ?? null
+      }))
+    : []
+});
+
+const mapLineupPlayers = (items = []) => items.map((entry) => ({
+  id: entry?.player?.id ?? null,
+  name: entry?.player?.name || null,
+  number: entry?.player?.number ?? null,
+  position: entry?.player?.pos || null,
+  grid: entry?.player?.grid || null
+}));
+
+const mapLineup = (lineup) => ({
+  team: {
+    id: lineup?.team?.id ?? null,
+    name: lineup?.team?.name || null,
+    logo: lineup?.team?.logo || null,
+    colors: lineup?.team?.colors || null
+  },
+  formation: lineup?.formation || null,
+  coach: {
+    id: lineup?.coach?.id ?? null,
+    name: lineup?.coach?.name || null,
+    photo: lineup?.coach?.photo || null
+  },
+  startingXI: mapLineupPlayers(lineup?.startXI),
+  substitutes: mapLineupPlayers(lineup?.substitutes)
+});
+
+const getMatchDetails = async (matchId) => {
+  const fixture = await fetchFixtureById(matchId);
+  if (fixture) {
+    return transformFixture(fixture);
+  }
+
+  return findStoredMatchById(matchId);
+};
+
+const getMatchEvents = async (matchId) => {
+  const events = await fetchFixtureEvents(matchId);
+  return events.map(mapEvent);
+};
+
+const getMatchStatistics = async (matchId) => {
+  const statistics = await fetchFixtureStatistics(matchId);
+  return statistics.map(mapStatistics);
+};
+
+const getMatchLineups = async (matchId) => {
+  const lineups = await fetchFixtureLineups(matchId);
+  return lineups.map(mapLineup);
+};
+
 module.exports = {
   importAllMatches,
   importLeagueMatches,
   pollLiveMatchesAndEmitUpdates,
   pollScheduledMatches,
   getSupportedLeagues,
-  LEAGUES
+  getMatchDetails,
+  getMatchEvents,
+  getMatchStatistics,
+  getMatchLineups,
+  findStoredMatchById,
+  LEAGUES,
+  LIVE_STATUSES
 };

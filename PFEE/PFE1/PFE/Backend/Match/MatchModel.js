@@ -1,19 +1,102 @@
 const mongoose = require("mongoose");
 
+const TeamScoreSchema = new mongoose.Schema({
+  home: {
+    type: Number,
+    default: null
+  },
+  away: {
+    type: Number,
+    default: null
+  }
+}, { _id: false });
+
 const MatchSchema = new mongoose.Schema({
-  apiMatchId: {
+  matchId: {
     type: Number,
     required: true,
     unique: true,
     index: true
   },
-  homeTeam: {
-    type: mongoose.Schema.Types.Mixed,
+  apiMatchId: {
+    type: Number,
+    index: true
+  },
+  league: {
+    type: String,
     required: true
   },
-  awayTeam: {
-    type: mongoose.Schema.Types.Mixed,
+  leagueId: {
+    type: Number,
+    default: null
+  },
+  leagueCode: {
+    type: String,
+    default: null
+  },
+  leagueLogo: {
+    type: String,
+    default: null
+  },
+  country: {
+    type: String,
+    default: null
+  },
+  countryFlag: {
+    type: String,
+    default: null
+  },
+  season: {
+    type: Number,
+    default: null
+  },
+  round: {
+    type: String,
+    default: null
+  },
+  stadium: {
+    type: String,
+    default: null
+  },
+  venue: {
+    type: String,
+    default: null
+  },
+  city: {
+    type: String,
+    default: null
+  },
+  referee: {
+    type: String,
+    default: null
+  },
+  homeTeam: {
+    type: String,
     required: true
+  },
+  homeTeamId: {
+    type: Number,
+    default: null
+  },
+  homeTeamLogo: {
+    type: String,
+    default: null
+  },
+  awayTeam: {
+    type: String,
+    required: true
+  },
+  awayTeamId: {
+    type: Number,
+    default: null
+  },
+  awayTeamLogo: {
+    type: String,
+    default: null
+  },
+  score: {
+    type: TeamScoreSchema,
+    default: () => ({})
   },
   homeScore: {
     type: Number,
@@ -23,22 +106,29 @@ const MatchSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
-  date: {
-    type: Date,
-    required: true
-  },
-  league: {
-    type: String,
-    required: true
-  },
-  leagueCode: {
-    type: String,
-    default: null
-  },
   status: {
     type: String,
     enum: ["scheduled", "live", "finished"],
-    default: "scheduled"
+    default: "scheduled",
+    index: true
+  },
+  statusShort: {
+    type: String,
+    default: null,
+    index: true
+  },
+  minute: {
+    type: Number,
+    default: null
+  },
+  date: {
+    type: Date,
+    required: true,
+    index: true
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   },
   createdAt: {
     type: Date,
