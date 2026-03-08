@@ -45,11 +45,15 @@ export default function ProfileScreen({ navigation }) {
   );
 
   const handleLogout = async () => {
-    await AsyncStorage.multiRemove(['userToken', 'userData']);
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'Home' }],
-    });
+    try {
+      await AsyncStorage.multiRemove(['userToken', 'userData']);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'MainTabs', params: { screen: 'Home' } }],
+      });
+    } catch (error) {
+      Alert.alert('Erreur', 'Impossible de se deconnecter pour le moment.');
+    }
   };
 
   if (loading) {

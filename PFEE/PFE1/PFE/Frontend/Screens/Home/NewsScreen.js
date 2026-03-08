@@ -1,371 +1,233 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
+  FlatList,
+  Linking,
   RefreshControl,
-  Image,
-  Dimensions,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { newsService } from '../../services/newsService';
 
-const { width } = Dimensions.get('window');
+import { newsService } from '../../services/newsService';
+import NewsCard from '../../components/NewsCard';
+import { useAppTheme } from '../../src/theme/AppThemeContext';
+import { APP_THEME_COLORS } from '../../src/theme/colors';
+
+const NEWS_LIMIT = 20;
 
 export default function NewsScreen() {
+  const { isLight } = useAppTheme();
+  const { width } = useWindowDimensions();
+  const palette = isLight ? APP_THEME_COLORS.light : APP_THEME_COLORS.dark;
+  const styles = useMemo(() => createStyles(isLight, palette, width), [isLight, palette, width]);
+
   const [news, setNews] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    loadCategories();
-    loadNews('all');
-  }, []);
-
-  const loadCategories = async () => {
+  const loadNews = useCallback(async ({ silent = false } = {}) => {
     try {
-      const cats = await newsService.getCategories();
-      setCategories(cats);
-    } catch (error) {
-      console.error('Erreur chargement catégories:', error);
-    }
-  };
+      if (!silent) {
+        setLoading(true);
+      }
+      setError('');
 
-  const loadNews = async (category = selectedCategory) => {
-    try {
-      setLoading(true);
-      const newsData = await newsService.getNews(category);
-      setNews(newsData);
-      setSelectedCategory(category);
-    } catch (error) {
-      console.error('Erreur chargement news:', error);
+      const items = await newsService.getNews(NEWS_LIMIT);
+      setNews(items);
+    } catch (loadError) {
+      setError(loadError?.message || 'Impossible de charger les actualites football.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  const handleRefresh = () => {
+  useEffect(() => {
+    loadNews();
+  }, [loadNews]);
+
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    loadNews(selectedCategory);
-  };
+    loadNews({ silent: true });
+  }, [loadNews]);
 
-  const formatDate = (date) => {
-    const today = new Date();
-    const newsDate = new Date(date);
-    const diffTime = today.getTime() - newsDate.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    
-    return newsDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
+  const handleOpenArticle = useCallback(async (url) => {
+    if (!url) return;
 
-  const formatDateShort = (date) => {
-    const newsDate = new Date(date);
-    return newsDate.toLocaleDateString('en-US', { weekday: 'long', month: '2-digit', day: '2-digit' });
-  };
-
-  const getNewsGroupedByDate = () => {
-    const grouped = {};
-    
-    news.forEach(item => {
-      const newsDate = new Date(item.date);
-      const dateKey = newsDate.toLocaleDateString('en-US'); // "2/5/2026"
-      
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = {
-          dateLabel: formatDateShort(newsDate),
-          articles: []
-        };
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        setError("Impossible d'ouvrir cet article.");
+        return;
       }
-      grouped[dateKey].articles.push(item);
-    });
+      await Linking.openURL(url);
+    } catch (openError) {
+      setError("Erreur lors de l'ouverture de l'article.");
+    }
+  }, []);
 
-    // Trier par date (plus récente en premier)
-    return Object.entries(grouped)
-      .sort((a, b) => new Date(b[0]) - new Date(a[0]))
-      .map(([dateKey, data]) => ({
-        ...data,
-        dateKey
-      }));
-  };
-
-  if (loading && !refreshing) {
+  if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <Text style={styles.headerTitle}>News</Text>
-            <Ionicons name="person-circle" size={28} color="#fff" />
-          </View>
-        </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#3b82f6" />
-          <Text style={styles.loadingText}>Chargement des actualités...</Text>
+      <View style={styles.screen}>
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={palette.primary} />
+          <Text style={styles.loadingText}>Chargement des actualites football...</Text>
         </View>
       </View>
     );
   }
 
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>News</Text>
-          <Ionicons name="person-circle" size={28} color="#fff" />
-        </View>
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <View style={styles.headerTitleRow}>
+        <Ionicons name="newspaper-outline" size={20} color={isLight ? '#0F172A' : '#E6EDF8'} />
+        <Text style={styles.headerTitle}>Actualites football</Text>
       </View>
+      <Text style={styles.headerSubtitle}>BBC Sport - RSS officiel</Text>
+    </View>
+  );
 
-      {/* Categories Tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.categoriesContainer}
-        contentContainerStyle={styles.categoriesContent}
-        pointerEvents="box-none"
-      >
-        {categories.map((category) => (
-          <TouchableOpacity
-            key={category}
-            style={[
-              styles.categoryTab,
-              selectedCategory === category && styles.categoryTabActive
-            ]}
-            onPress={() => loadNews(category)}
-          >
-            <Text
-              style={[
-                styles.categoryText,
-                selectedCategory === category && styles.categoryTextActive
-              ]}
-            >
-              {category.toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+  const renderEmpty = () => (
+    <View style={styles.emptyWrap}>
+      <Ionicons name="football-outline" size={42} color={isLight ? '#94A3B8' : '#6E83A1'} />
+      <Text style={styles.emptyTitle}>Aucune actualite disponible</Text>
+      <Text style={styles.emptySubtitle}>Tire vers le bas pour reessayer.</Text>
+    </View>
+  );
 
-      {/* News List */}
-      <ScrollView
-        style={styles.newsContainer}
-        contentContainerStyle={styles.newsListContent}
+  return (
+    <View style={styles.screen}>
+      <FlatList
+        data={news}
+        keyExtractor={(item, index) => item?.id || `${item?.link || 'news'}-${index}`}
+        renderItem={({ item }) => (
+          <NewsCard item={item} isLight={isLight} onPress={() => handleOpenArticle(item?.link)} />
+        )}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={!error ? renderEmpty : null}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#3b82f6"
+            tintColor={palette.primary}
           />
         }
-      >
-        {news.length > 0 ? (
-          getNewsGroupedByDate().map((dayGroup) => (
-            <View key={dayGroup.dateKey}>
-              {/* Date Section Header */}
-              <Text style={styles.dateHeader}>{dayGroup.dateLabel}</Text>
-              
-              {/* Articles for this day */}
-              {dayGroup.articles.map((item, index) => (
-                <TouchableOpacity 
-                  key={item.id} 
-                  style={[
-                    styles.newsCard,
-                    index === 0 && styles.firstArticleOfDay
-                  ]}
-                >
-                  <Image
-                    source={{ uri: item.image }}
-                    style={styles.newsImage}
-                  />
-                  <View style={styles.newsCardContent}>
-                    <Text style={styles.newsTitle} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.newsCategory}>
-                      {item.category.toUpperCase()}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ))
-        ) : (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="newspaper-outline" size={48} color="#94a3b8" />
-            <Text style={styles.emptyText}>Aucune actualité disponible</Text>
-          </View>
-        )}
-      </ScrollView>
+      />
+
+      {error ? (
+        <View style={styles.errorBox}>
+          <Ionicons name="alert-circle-outline" size={16} color={isLight ? '#B91C1C' : '#FCA5A5'} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => loadNews()}>
+            <Text style={styles.retryText}>Reessayer</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#020617',
-  },
-  header: {
-    backgroundColor: '#0f172a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-    paddingTop: 8,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  categoriesContainer: {
-    backgroundColor: '#0f172a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-  },
-  categoriesContent: {
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-  },
-  categoryTab: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginHorizontal: 6,
-    borderBottomWidth: 3,
-    borderBottomColor: 'transparent',
-  },
-  categoryTabActive: {
-    borderBottomColor: '#ef4444',
-  },
-  categoryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-  },
-  categoryTextActive: {
-    color: '#ef4444',
-  },
-  newsContainer: {
-    flex: 1,
-  },
-  newsListContent: {
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-    paddingBottom: 70,
-    paddingTop: 0,
-  },
-  dateHeader: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    paddingTop: 8,
-    backgroundColor: '#0f172a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-  },
-  // Featured Article
-  featuredNewsCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 8,
-    marginHorizontal: 12,
-    marginBottom: 6,
-    marginTop: 0,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  featuredImage: {
-    width: '100%',
-    height: 220,
-    backgroundColor: '#1e293b',
-  },
-  featuredContent: {
-    padding: 10,
-  },
-  featuredTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
-    lineHeight: 20,
-  },
-  // Standard News Card
-  newsCard: {
-    flexDirection: 'row',
-    backgroundColor: '#0f172a',
-    borderRadius: 0,
-    marginHorizontal: 0,
-    marginBottom: 0,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderLeftWidth: 0,
-    borderTopWidth: 0,
-  },
-  firstArticleOfDay: {
-    borderTopWidth: 1,
-    marginHorizontal: 0,
-  },
-  newsImage: {
-    width: 100,
-    height: 100,
-    backgroundColor: '#1e293b',
-  },
-  newsCardContent: {
-    flex: 1,
-    padding: 10,
-    justifyContent: 'space-between',
-  },
-  newsTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 4,
-    lineHeight: 16,
-  },
-  newsCategory: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#ef4444',
-    textTransform: 'uppercase',
-  },
-  newsDate: {
-    fontSize: 11,
-    color: '#94a3b8',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    color: '#94a3b8',
-    fontSize: 16,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    marginTop: 12,
-    color: '#94a3b8',
-    fontSize: 16,
-  },
-});
+const createStyles = (isLight, palette, width) =>
+  StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: palette.background,
+    },
+    loadingWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+    },
+    loadingText: {
+      marginTop: 10,
+      color: isLight ? '#475569' : '#9FB1C9',
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    listContent: {
+      paddingHorizontal: 12,
+      paddingBottom: 28,
+      width: '100%',
+      maxWidth: width >= 1200 ? 1040 : width >= 900 ? 900 : '100%',
+      alignSelf: 'center',
+    },
+    header: {
+      paddingTop: 12,
+      paddingBottom: 10,
+    },
+    headerTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    headerTitle: {
+      color: palette.text,
+      fontSize: 24,
+      fontWeight: '900',
+    },
+    headerSubtitle: {
+      marginTop: 4,
+      color: isLight ? '#56647B' : '#90A1BC',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    emptyWrap: {
+      marginTop: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 30,
+    },
+    emptyTitle: {
+      marginTop: 10,
+      color: isLight ? '#334155' : '#C5D3E6',
+      fontSize: 16,
+      fontWeight: '800',
+    },
+    emptySubtitle: {
+      marginTop: 4,
+      color: isLight ? '#64748B' : '#8EA1BC',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    errorBox: {
+      marginHorizontal: 12,
+      marginBottom: 12,
+      marginTop: 2,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: isLight ? '#F5C2C2' : '#5C2222',
+      backgroundColor: isLight ? '#FFF1F1' : '#2A1212',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    errorText: {
+      flex: 1,
+      color: isLight ? '#B91C1C' : '#FCA5A5',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    retryButton: {
+      borderRadius: 999,
+      backgroundColor: isLight ? '#ffd8c9' : '#46586b',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    retryText: {
+      color: isLight ? palette.primary : '#e4f1fe',
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+  });

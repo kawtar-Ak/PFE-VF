@@ -151,6 +151,14 @@ const MatchSchema = new mongoose.Schema({
     type: [MatchEventSchema],
     default: []
   },
+  statistics: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: []
+  },
+  lineups: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: []
+  },
   updatedAt: {
     type: Date,
     default: Date.now

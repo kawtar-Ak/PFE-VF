@@ -10,6 +10,9 @@ import {
   RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import LeagueLogo from '../components/LeagueLogo';
+import { matchService } from '../services/matchService';
+import { BRAND_COLORS } from '../src/theme/colors';
 
 export default function MatchesScreen() {
   const [matches, setMatches] = useState([]);
@@ -52,8 +55,8 @@ export default function MatchesScreen() {
 
   const getStatusColor = (status) => {
     switch(status) {
-      case 'live': return '#ef4444';
-      case 'finished': return '#60A3D9';
+      case 'live': return BRAND_COLORS.accent;
+      case 'finished': return BRAND_COLORS.second;
       case 'scheduled': return '#94a3b8';
       default: return '#94a3b8';
     }
@@ -72,7 +75,10 @@ export default function MatchesScreen() {
     <View style={styles.matchCard}>
       <View style={[styles.statusBar, { backgroundColor: getStatusColor(item.status) }]}>
         <Text style={styles.statusLabel}>{getStatusLabel(item.status)}</Text>
-        <Text style={styles.leagueName}>{item.league}</Text>
+        <View style={styles.leagueWrap}>
+          <LeagueLogo source={item} size={16} style={styles.leagueLogo} />
+          <Text style={styles.leagueName}>{item.league}</Text>
+        </View>
       </View>
 
       <View style={styles.matchContent}>
@@ -108,17 +114,17 @@ export default function MatchesScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Ionicons name="football-outline" size={24} color="#E0F2FE" />
+          <Ionicons name="football-outline" size={24} color={BRAND_COLORS.first} />
           <Text style={styles.headerTitle}>Matches</Text>
         </View>
         <TouchableOpacity onPress={loadMatches}>
-          <Ionicons name="refresh" size={24} color="#E0F2FE" />
+          <Ionicons name="refresh" size={24} color={BRAND_COLORS.first} />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#60A3D9" />
+          <ActivityIndicator size="large" color={BRAND_COLORS.second} />
           <Text style={styles.loadingText}>Chargement des matches...</Text>
         </View>
       ) : matches.length === 0 ? (
@@ -145,7 +151,7 @@ export default function MatchesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617'
+    backgroundColor: BRAND_COLORS.third
   },
   header: {
     flexDirection: 'row',
@@ -154,14 +160,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#0f172a'
+    borderBottomColor: BRAND_COLORS.fourth
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center'
   },
   headerTitle: {
-    color: '#E0F2FE',
+    color: BRAND_COLORS.first,
     fontSize: 22,
     fontWeight: 'bold',
     marginLeft: 8
@@ -178,7 +184,7 @@ const styles = StyleSheet.create({
     fontSize: 14
   },
   emptyText: {
-    color: '#E0F2FE',
+    color: BRAND_COLORS.first,
     fontSize: 18,
     fontWeight: '600',
     marginTop: 16
@@ -192,12 +198,12 @@ const styles = StyleSheet.create({
     padding: 12
   },
   matchCard: {
-    backgroundColor: '#0f172a',
+    backgroundColor: BRAND_COLORS.fourth,
     borderRadius: 12,
     marginBottom: 12,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#1e293b'
+    borderColor: '#4a6177'
   },
   statusBar: {
     flexDirection: 'row',
@@ -216,6 +222,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600'
   },
+  leagueWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  leagueLogo: {
+    backgroundColor: '#1E293B',
+    borderWidth: 0
+  },
   matchContent: {
     flexDirection: 'row',
     paddingVertical: 16,
@@ -232,7 +247,7 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   time: {
-    color: '#60A3D9',
+    color: BRAND_COLORS.second,
     fontSize: 10,
     marginTop: 2
   },
@@ -242,7 +257,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 8
   },
   teamName: {
-    color: '#E0F2FE',
+    color: BRAND_COLORS.first,
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center'
@@ -252,12 +267,12 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   score: {
-    color: '#E0F2FE',
+    color: BRAND_COLORS.first,
     fontSize: 16,
     fontWeight: 'bold'
   },
   timeDisplay: {
-    color: '#60A3D9',
+    color: BRAND_COLORS.second,
     fontSize: 12,
     fontWeight: '600'
   }

@@ -1,9 +1,64 @@
-import { Platform } from 'react-native';
 import { io } from 'socket.io-client';
+import { API_BASE_URL } from './apiConfig';
 
-const API_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-const API_URL = `http://${API_HOST}:3000/api/match`;
-const SOCKET_URL = `http://${API_HOST}:3000`;
+const API_URL = `${API_BASE_URL}/api/match`;
+const SOCKET_URL = API_BASE_URL;
+const loggedErrors = new Set();
+const normalizeLineupPlayers = (players) => {
+  if (!Array.isArray(players)) return [];
+
+  return players.map((entry) => {
+    const player = entry?.player || entry || {};
+    return {
+      id: player?.id ?? null,
+      name: player?.name || null,
+      number: player?.number ?? null,
+      position: player?.position || player?.pos || null,
+      grid: player?.grid || null,
+    };
+  });
+};
+
+const normalizeLineupsPayload = (payload) => {
+  const lineups = Array.isArray(payload?.lineups)
+    ? payload.lineups
+    : Array.isArray(payload?.response)
+      ? payload.response
+      : [];
+
+  return lineups.map((lineup) => ({
+    team: {
+      id: lineup?.team?.id ?? null,
+      name: lineup?.team?.name || null,
+      logo: lineup?.team?.logo || null,
+      colors: lineup?.team?.colors || null,
+    },
+    formation: lineup?.formation || null,
+    coach: {
+      id: lineup?.coach?.id ?? null,
+      name: lineup?.coach?.name || null,
+      photo: lineup?.coach?.photo || null,
+    },
+    startingXI: normalizeLineupPlayers(lineup?.startingXI || lineup?.startXI),
+    substitutes: normalizeLineupPlayers(lineup?.substitutes || lineup?.bench),
+  }));
+};
+
+const logRequestError = (scope, error) => {
+  const message = String(error?.message || error || 'unknown error');
+  const dedupeKey = `${scope}:${message}`;
+
+  if (message.toLowerCase().includes('network request failed')) {
+    if (loggedErrors.has(dedupeKey)) {
+      return;
+    }
+    loggedErrors.add(dedupeKey);
+    console.warn(`[network] ${scope}: ${message}`);
+    return;
+  }
+
+  console.error(`[${scope}]`, error);
+};
 
 export const matchService = {
   getAllMatches: async () => {
@@ -12,18 +67,43 @@ export const matchService = {
       const data = await response.json();
       return data.matches || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getAllMatches', error);
       return [];
     }
   },
 
   getMatchesByLeague: async (league) => {
     try {
-      const response = await fetch(`${API_URL}/league/${league}`);
+      const response = await fetch(`${API_URL}/league/${encodeURIComponent(league)}`);
       const data = await response.json();
       return data.matches || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchesByLeague', error);
+      return [];
+    }
+  },
+
+  getLeagueStandings: async (leagueId, season, leagueName) => {
+    try {
+      if (!leagueId && !leagueName) {
+        return [];
+      }
+
+      const params = new URLSearchParams();
+      if (leagueId) {
+        params.set('leagueId', String(leagueId));
+      } else if (leagueName) {
+        params.set('league', String(leagueName));
+      }
+      if (season) {
+        params.set('season', String(season));
+      }
+
+      const response = await fetch(`${API_URL}/standings?${params.toString()}`);
+      const data = await response.json();
+      return data.standings || [];
+    } catch (error) {
+      logRequestError('getLeagueStandings', error);
       return [];
     }
   },
@@ -34,7 +114,7 @@ export const matchService = {
       const data = await response.json();
       return data.matches || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getLiveMatches', error);
       return [];
     }
   },
@@ -45,7 +125,7 @@ export const matchService = {
       const data = await response.json();
       return data.matches || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchesByDate', error);
       return [];
     }
   },
@@ -56,7 +136,7 @@ export const matchService = {
       const data = await response.json();
       return data.match || null;
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchById', error);
       return null;
     }
   },
@@ -67,7 +147,7 @@ export const matchService = {
       const data = await response.json();
       return data.events || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchEvents', error);
       return [];
     }
   },
@@ -78,7 +158,7 @@ export const matchService = {
       const data = await response.json();
       return data.statistics || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchStatistics', error);
       return [];
     }
   },
@@ -87,9 +167,9 @@ export const matchService = {
     try {
       const response = await fetch(`${API_URL}/${matchId}/lineups`);
       const data = await response.json();
-      return data.lineups || [];
+      return normalizeLineupsPayload(data);
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getMatchLineups', error);
       return [];
     }
   },
@@ -100,7 +180,7 @@ export const matchService = {
       const data = await response.json();
       return data.leagues || [];
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('getSupportedLeagues', error);
       return [];
     }
   },
@@ -110,7 +190,7 @@ export const matchService = {
       const response = await fetch(`${API_URL}/import/all`, { method: 'POST' });
       return await response.json();
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('importAllMatches', error);
       return { success: false, message: error.message };
     }
   },
@@ -120,17 +200,37 @@ export const matchService = {
       const response = await fetch(`${API_URL}/import/${leagueCode}`, { method: 'POST' });
       return await response.json();
     } catch (error) {
-      console.error('Error:', error);
+      logRequestError('importLeague', error);
       return { success: false, message: error.message };
     }
   },
 
+  importMatchDetails: async (matchId) => {
+    try {
+      const response = await fetch(`${API_URL}/${matchId}/import/details`, { method: 'POST' });
+      return await response.json();
+    } catch (error) {
+      logRequestError('importMatchDetails', error);
+      return { success: false, message: error.message };
+    }
+  },
+
+  getProviderStatus: async () => {
+    try {
+      const response = await fetch(`${API_URL}/provider/status`);
+      return await response.json();
+    } catch (error) {
+      logRequestError('getProviderStatus', error);
+      return { provider: 'api-sports', blocked: false, blockedUntil: null, lastError: null };
+    }
+  },
+
   createSocketConnection: () => io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1200,
+    reconnectionDelayMax: 8000,
     timeout: 10000,
   }),
 

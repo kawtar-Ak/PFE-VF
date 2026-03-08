@@ -11,6 +11,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { favoritesService } from '../../services/favoritesService';
+import LeagueLogo from '../../components/LeagueLogo';
+import TeamLogo from '../../components/TeamLogo';
+import { getMatchPhase } from '../../utils/matchStatus';
 
 export default function FavoritesScreen({ navigation }) {
   const [favorites, setFavorites] = useState([]);
@@ -70,6 +73,13 @@ export default function FavoritesScreen({ navigation }) {
     }));
   };
 
+  const openLeagueCompetition = (league, leagueMeta) => {
+    navigation.getParent()?.navigate('LeagueCompetition', {
+      league,
+      leagueMeta: leagueMeta || { league },
+    });
+  };
+
   const removeFavorite = async (matchId) => {
     await favoritesService.removeFavorite(matchId);
   };
@@ -85,16 +95,23 @@ export default function FavoritesScreen({ navigation }) {
     .sort((left, right) => left[0].localeCompare(right[0]))
     .map(([league, matches]) => ({
       title: league,
+      leagueMeta: matches[0] || { league },
       data: expandedLeagues[league] === false ? [] : matches,
     }));
 
-  const renderSectionHeader = ({ section: { title } }) => {
+  const renderSectionHeader = ({ section: { title, leagueMeta } }) => {
     const leagueCount = favorites.filter((match) => (match.league || 'Autre') === title).length;
 
     return (
-      <TouchableOpacity style={styles.leagueHeader} onPress={() => toggleLeague(title)} activeOpacity={0.88}>
+      <TouchableOpacity
+        style={styles.leagueHeader}
+        onPress={() => openLeagueCompetition(title, leagueMeta)}
+        onLongPress={() => toggleLeague(title)}
+        activeOpacity={0.88}
+      >
         <View style={styles.leagueHeaderLeft}>
-          <Ionicons name={expandedLeagues[title] === false ? 'chevron-forward' : 'chevron-down'} size={18} color="#E8EEF8" />
+          <Ionicons name="chevron-forward" size={18} color="#E8EEF8" />
+          <LeagueLogo source={leagueMeta} size={18} style={styles.leagueHeaderLogo} />
           <Text style={styles.leagueTitle}>{title}</Text>
         </View>
         <Text style={styles.leagueCount}>{leagueCount}</Text>
@@ -105,9 +122,9 @@ export default function FavoritesScreen({ navigation }) {
   const renderMatch = ({ item }) => {
     const matchDate = new Date(item.date);
     const timeLabel = matchDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    const status = String(item.status || '').toUpperCase();
-    const isLive = status === 'LIVE';
-    const isFinished = status === 'FINISHED';
+    const phase = getMatchPhase(item);
+    const isLive = phase === 'live';
+    const isFinished = phase === 'finished';
 
     let statusLabel = 'A VENIR';
     let borderColor = '#2F6BFF';
@@ -145,13 +162,27 @@ export default function FavoritesScreen({ navigation }) {
         </View>
 
         <View style={styles.matchContent}>
-          <Text style={styles.teamName} numberOfLines={1}>{item.homeTeam || 'Equipe locale'}</Text>
+          <View style={styles.teamColumn}>
+            <View style={[styles.teamRow, styles.teamRowHome]}>
+              <TeamLogo uri={item.homeTeamLogo} size={30} />
+              <Text style={[styles.teamName, styles.teamNameHome]} numberOfLines={1}>
+                {item.homeTeam || 'Equipe locale'}
+              </Text>
+            </View>
+          </View>
           <View style={styles.scoreRow}>
             <Text style={[styles.score, isLive && styles.scoreLive]}>{isFinished || isLive ? item.homeScore ?? '-' : '-'}</Text>
             <Text style={styles.scoreSeparator}>-</Text>
             <Text style={[styles.score, isLive && styles.scoreLive]}>{isFinished || isLive ? item.awayScore ?? '-' : '-'}</Text>
           </View>
-          <Text style={styles.teamName} numberOfLines={1}>{item.awayTeam || 'Equipe visiteuse'}</Text>
+          <View style={styles.teamColumn}>
+            <View style={[styles.teamRow, styles.teamRowAway]}>
+              <Text style={[styles.teamName, styles.teamNameAway]} numberOfLines={1}>
+                {item.awayTeam || 'Equipe visiteuse'}
+              </Text>
+              <TeamLogo uri={item.awayTeamLogo} size={30} />
+            </View>
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -250,6 +281,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  leagueHeaderLogo: {
+    marginLeft: 8,
+    backgroundColor: '#121C2E',
+    borderWidth: 0,
+  },
   leagueTitle: {
     marginLeft: 8,
     color: '#E8EEF8',
@@ -304,11 +340,32 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
-  teamName: {
+  teamColumn: {
     flex: 1,
+  },
+  teamRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  teamRowHome: {
+    justifyContent: 'flex-start',
+  },
+  teamRowAway: {
+    justifyContent: 'flex-end',
+  },
+  teamName: {
     color: '#E8EEF8',
     fontSize: 14,
     fontWeight: '800',
+  },
+  teamNameHome: {
+    textAlign: 'left',
+    flex: 1,
+  },
+  teamNameAway: {
+    textAlign: 'right',
+    flex: 1,
   },
   scoreRow: {
     minWidth: 78,
@@ -362,3 +419,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

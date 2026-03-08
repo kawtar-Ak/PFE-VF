@@ -29,6 +29,8 @@ const LEAGUES = {
 let importAllInProgress = false;
 let livePollInProgress = false;
 let scheduledPollInProgress = false;
+let apiSportsBlockedUntil = 0;
+let apiSportsLastError = null;
 
 const getHeaders = () => ({
   "x-apisports-key": API_SPORTS_KEY
@@ -69,6 +71,10 @@ const requestApiSports = async (path, params = {}) => {
     return [];
   }
 
+  if (apiSportsBlockedUntil > Date.now()) {
+    return [];
+  }
+
   const url = new URL(`${API_SPORTS_BASE_URL}${path}`);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
@@ -87,12 +93,23 @@ const requestApiSports = async (path, params = {}) => {
 
     const payload = await response.json();
     if (payload?.errors && Object.keys(payload.errors).length > 0) {
+      apiSportsLastError = payload.errors;
+      const requestsError = String(payload?.errors?.requests || "").toLowerCase();
+      if (requestsError.includes("reached the request limit")) {
+        // Stop hitting API-Sports until next UTC day to avoid burning calls.
+        const now = new Date();
+        const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
+        apiSportsBlockedUntil = nextUtcMidnight;
+        console.warn("API-Sports request limit reached. Blocking external calls until next UTC day.");
+      }
+
       console.error("API-Sports payload errors:", payload.errors);
       return [];
     }
 
     return Array.isArray(payload?.response) ? payload.response : [];
   } catch (error) {
+    apiSportsLastError = { network: error.message };
     console.error("API-Sports request failed:", error.message);
     return [];
   }
@@ -127,6 +144,10 @@ const fetchFixtureById = async (fixtureId) => {
 const fetchFixtureEvents = async (fixtureId) => requestApiSports("/fixtures/events", { fixture: fixtureId });
 const fetchFixtureStatistics = async (fixtureId) => requestApiSports("/fixtures/statistics", { fixture: fixtureId });
 const fetchFixtureLineups = async (fixtureId) => requestApiSports("/fixtures/lineups", { fixture: fixtureId });
+const fetchLeagueStandings = async (leagueId, season = getCurrentSeason()) => requestApiSports("/standings", {
+  league: leagueId,
+  season
+});
 
 const transformFixture = (fixture, fallbackLeagueCode = null, fallbackLeagueName = null) => {
   const fixtureId = fixture?.fixture?.id;
@@ -184,6 +205,20 @@ const mapEventForStorage = (event) => ({
   comments: event?.comments || null
 });
 
+const dedupeEventsById = (events = []) => {
+  const seen = new Set();
+  const output = [];
+
+  for (const event of events) {
+    const eventId = String(event?.eventId || "");
+    if (!eventId || seen.has(eventId)) continue;
+    seen.add(eventId);
+    output.push(event);
+  }
+
+  return output;
+};
+
 const isDynamicChange = (existing, nextPayload) => {
   if (!existing) return true;
 
@@ -198,6 +233,23 @@ const isDynamicChange = (existing, nextPayload) => {
     existing.round !== nextPayload.round ||
     existing.stadium !== nextPayload.stadium ||
     existing.city !== nextPayload.city
+  );
+};
+
+const hasCoreDynamicChange = (existing, incoming) => {
+  if (!existing) return true;
+
+  return (
+    existing.status !== incoming.status ||
+    existing.statusShort !== incoming.statusShort ||
+    existing.minute !== incoming.minute ||
+    existing.homeScore !== (incoming.goals?.home ?? null) ||
+    existing.awayScore !== (incoming.goals?.away ?? null) ||
+    String(existing.date) !== String(incoming.date) ||
+    existing.referee !== incoming.referee ||
+    existing.round !== incoming.round ||
+    existing.stadium !== incoming.stadium ||
+    existing.city !== incoming.city
   );
 };
 
@@ -256,7 +308,11 @@ const mergeFixtures = (fixtures, leagueCode, leagueName, bucket) => {
   });
 };
 
-const syncMatches = async (matches, io, emitUpdates = false, includeLiveEvents = false) => {
+const syncMatches = async (matches, io, options = {}) => {
+  const emitUpdates = Boolean(options.emitUpdates);
+  const includeLiveEvents = Boolean(options.includeLiveEvents);
+  const includeFinishedDetails = Boolean(options.includeFinishedDetails);
+
   let upserted = 0;
   let emitted = 0;
 
@@ -292,10 +348,39 @@ const syncMatches = async (matches, io, emitUpdates = false, includeLiveEvents =
       continue;
     }
 
+    const existing = await Match.findOne({
+      $or: [
+        { fixtureId: incoming.fixtureId },
+        { matchId: incoming.fixtureId },
+        { apiMatchId: incoming.fixtureId }
+      ]
+    }).lean();
+
+    const hasStoredEvents = Array.isArray(existing?.events) && existing.events.length > 0;
+    const hasStoredStatistics = Array.isArray(existing?.statistics) && existing.statistics.length > 0;
+    const hasStoredLineups = Array.isArray(existing?.lineups) && existing.lineups.length > 0;
+    const coreChanged = hasCoreDynamicChange(existing, incoming);
+    const needsFinishedHydration = incoming.status === "finished" && includeFinishedDetails && (
+      !hasStoredEvents || !hasStoredStatistics || !hasStoredLineups || existing?.status !== "finished"
+    );
+    // For live matches, avoid repeated API calls when nothing changed.
+    const shouldHydrateLiveEvents = includeLiveEvents && incoming.status === "live" && (coreChanged || !hasStoredEvents);
+    const shouldHydrateDetails = shouldHydrateLiveEvents || needsFinishedHydration;
+
     let events = [];
-    if (includeLiveEvents && incoming.status === "live") {
+    let statistics = [];
+    let lineups = [];
+
+    if (shouldHydrateLiveEvents || needsFinishedHydration) {
       const liveEvents = await fetchFixtureEvents(incoming.fixtureId);
-      events = liveEvents.map(mapEventForStorage);
+      events = dedupeEventsById(liveEvents.map(mapEventForStorage));
+    }
+
+    if (needsFinishedHydration) {
+      const fetchedStatistics = await fetchFixtureStatistics(incoming.fixtureId);
+      const fetchedLineups = await fetchFixtureLineups(incoming.fixtureId);
+      statistics = fetchedStatistics.map(mapStatistics);
+      lineups = fetchedLineups.map(mapLineup);
     }
 
     const payload = {
@@ -317,19 +402,15 @@ const syncMatches = async (matches, io, emitUpdates = false, includeLiveEvents =
       score: incoming.goals,
       homeScore: incoming.goals?.home ?? null,
       awayScore: incoming.goals?.away ?? null,
-      events,
+      // Important: never wipe stored events when current poll has none.
+      events: events.length > 0 ? events : (Array.isArray(existing?.events) ? existing.events : []),
+      // Same principle: keep previously stored arrays when provider returns nothing.
+      statistics: statistics.length > 0 ? statistics : (Array.isArray(existing?.statistics) ? existing.statistics : []),
+      lineups: lineups.length > 0 ? lineups : (Array.isArray(existing?.lineups) ? existing.lineups : []),
       updatedAt: new Date()
     };
 
-    const existing = await Match.findOne({
-      $or: [
-        { fixtureId: incoming.fixtureId },
-        { matchId: incoming.fixtureId },
-        { apiMatchId: incoming.fixtureId }
-      ]
-    }).lean();
-
-    if (!isDynamicChange(existing, payload) && !(includeLiveEvents && incoming.status === "live")) {
+    if (!isDynamicChange(existing, payload) && !shouldHydrateDetails) {
       continue;
     }
 
@@ -380,7 +461,11 @@ const importLeagueMatches = async (leagueCode, io = null) => {
     mergeFixtures(fixtures, leagueCode, league.name, bucket);
     mergeFixtures(relevantLiveFixtures, leagueCode, league.name, bucket);
 
-    const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io), true);
+    const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
+      emitUpdates: Boolean(io),
+      includeLiveEvents: true,
+      includeFinishedDetails: true
+    });
 
     return {
       success: true,
@@ -418,7 +503,11 @@ const importAllMatches = async (io = null) => {
       mergeFixtures(fixtures, leagueCode, league.name, bucket);
       mergeFixtures(relevantLiveFixtures, leagueCode, league.name, bucket);
 
-      const { upserted, emitted } = await syncMatches([...bucket.values()], io, Boolean(io), false);
+      const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
+        emitUpdates: Boolean(io),
+        includeLiveEvents: false,
+        includeFinishedDetails: true
+      });
       total += upserted;
       totalEmitted += emitted;
 
@@ -462,7 +551,11 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
       })
       .filter((match) => match.fixtureId && match.date && match.status === "live");
 
-    const { upserted, emitted } = await syncMatches(transformedMatches, io, true, true);
+    const { upserted, emitted } = await syncMatches(transformedMatches, io, {
+      emitUpdates: true,
+      includeLiveEvents: true,
+      includeFinishedDetails: false
+    });
     console.log(`[live-poll] checked ${transformedMatches.length}, upserted ${upserted}, emitted ${emitted}`);
 
     return {
@@ -538,6 +631,8 @@ const serializeMatch = (matchDoc) => {
     homeScore: matchDoc.homeScore ?? matchDoc.goals?.home ?? null,
     awayScore: matchDoc.awayScore ?? matchDoc.goals?.away ?? null,
     events: Array.isArray(matchDoc.events) ? matchDoc.events : [],
+    statistics: Array.isArray(matchDoc.statistics) ? matchDoc.statistics : [],
+    lineups: Array.isArray(matchDoc.lineups) ? matchDoc.lineups : [],
     updatedAt: matchDoc.updatedAt
   };
 };
@@ -564,7 +659,11 @@ const getMatchDetails = async (fixtureId) => {
   const fixture = await fetchFixtureById(fixtureId);
   if (fixture) {
     const transformed = transformFixture(fixture);
-    const hydrated = await syncMatches([transformed], null, false, true);
+    const hydrated = await syncMatches([transformed], null, {
+      emitUpdates: false,
+      includeLiveEvents: true,
+      includeFinishedDetails: true
+    });
     if (hydrated.upserted >= 0) {
       const stored = await findStoredMatchById(fixtureId);
       if (stored) return stored;
@@ -597,14 +696,41 @@ const mapEventResponse = (event) => ({
 });
 
 const getMatchEvents = async (fixtureId) => {
+  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ events: 1 }).lean();
+  if (Array.isArray(stored?.events) && stored.events.length > 0) {
+    return stored.events.map((event) => ({
+      id: event?.eventId || `${event?.minute || 0}-${event?.teamId || 0}-${event?.playerId || 0}-${event?.type || "event"}`,
+      minute: event?.minute ?? null,
+      extraMinute: event?.extraMinute ?? null,
+      team: {
+        id: event?.teamId ?? null,
+        name: event?.teamName || null,
+        logo: null
+      },
+      player: {
+        id: event?.playerId ?? null,
+        name: event?.playerName || null
+      },
+      assist: {
+        id: event?.assistId ?? null,
+        name: event?.assistName || null
+      },
+      type: event?.type || null,
+      detail: event?.detail || null,
+      comments: event?.comments || null
+    }));
+  }
+
   const events = await fetchFixtureEvents(fixtureId);
   const mapped = events.map(mapEventResponse);
 
-  await Match.findOneAndUpdate(
-    buildMatchQueryById(fixtureId),
-    { $set: { events: mapped.map(mapEventForStorage), updatedAt: new Date() } },
-    { new: false }
-  );
+  if (mapped.length > 0) {
+    await Match.findOneAndUpdate(
+      buildMatchQueryById(fixtureId),
+      { $set: { events: mapped.map(mapEventForStorage), updatedAt: new Date() } },
+      { new: false }
+    );
+  }
 
   return mapped;
 };
@@ -624,8 +750,23 @@ const mapStatistics = (teamStats) => ({
 });
 
 const getMatchStatistics = async (fixtureId) => {
+  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ statistics: 1 }).lean();
+  if (Array.isArray(stored?.statistics) && stored.statistics.length > 0) {
+    return stored.statistics;
+  }
+
   const statistics = await fetchFixtureStatistics(fixtureId);
-  return statistics.map(mapStatistics);
+  const mapped = statistics.map(mapStatistics);
+
+  if (mapped.length > 0) {
+    await Match.findOneAndUpdate(
+      buildMatchQueryById(fixtureId),
+      { $set: { statistics: mapped, updatedAt: new Date() } },
+      { new: false }
+    );
+  }
+
+  return mapped;
 };
 
 const mapLineupPlayers = (items = []) => items.map((entry) => ({
@@ -654,8 +795,63 @@ const mapLineup = (lineup) => ({
 });
 
 const getMatchLineups = async (fixtureId) => {
+  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ lineups: 1 }).lean();
+  if (Array.isArray(stored?.lineups) && stored.lineups.length > 0) {
+    return stored.lineups;
+  }
+
   const lineups = await fetchFixtureLineups(fixtureId);
-  return lineups.map(mapLineup);
+  const mapped = lineups.map(mapLineup);
+
+  if (mapped.length > 0) {
+    await Match.findOneAndUpdate(
+      buildMatchQueryById(fixtureId),
+      { $set: { lineups: mapped, updatedAt: new Date() } },
+      { new: false }
+    );
+  }
+
+  return mapped;
+};
+
+const resolveLeagueIdByName = (leagueName) => {
+  const target = String(leagueName || '').trim().toLowerCase();
+  if (!target) return null;
+
+  const match = Object.values(LEAGUES).find((league) => String(league.name || '').toLowerCase() === target);
+  return match?.id || null;
+};
+
+const getLeagueStandings = async (leagueId, season = getCurrentSeason()) => {
+  if (!leagueId) return [];
+
+  const response = await fetchLeagueStandings(leagueId, season);
+  const leaguePayload = response?.[0]?.league;
+  const groupedStandings = Array.isArray(leaguePayload?.standings) ? leaguePayload.standings : [];
+
+  return groupedStandings.flat().map((entry) => ({
+    rank: entry?.rank ?? null,
+    points: entry?.points ?? null,
+    goalsDiff: entry?.goalsDiff ?? null,
+    form: entry?.form || '',
+    team: {
+      id: entry?.team?.id ?? null,
+      name: entry?.team?.name || null,
+      logo: entry?.team?.logo || null,
+    },
+    all: {
+      played: entry?.all?.played ?? null,
+      win: entry?.all?.win ?? null,
+      draw: entry?.all?.draw ?? null,
+      lose: entry?.all?.lose ?? null,
+      goals: {
+        for: entry?.all?.goals?.for ?? null,
+        against: entry?.all?.goals?.against ?? null,
+      },
+    },
+    group: entry?.group || null,
+    description: entry?.description || null,
+  }));
 };
 
 const listMatches = async (query = {}) => {
@@ -669,6 +865,55 @@ const listMatches = async (query = {}) => {
   return matches.map(serializeMatch);
 };
 
+const hydrateFinishedMatchesDetails = async (limit = 20) => {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const candidates = await Match.find({
+    status: "finished",
+    $or: [
+      { "events.0": { $exists: false } },
+      { "statistics.0": { $exists: false } },
+      { "lineups.0": { $exists: false } }
+    ]
+  })
+    .sort({ date: -1 })
+    .limit(safeLimit)
+    .select({ fixtureId: 1 })
+    .lean();
+
+  let processed = 0;
+  let updated = 0;
+
+  for (const item of candidates) {
+    const fixtureId = item?.fixtureId;
+    if (!fixtureId) continue;
+
+    const [events, statistics, lineups] = await Promise.all([
+      getMatchEvents(fixtureId),
+      getMatchStatistics(fixtureId),
+      getMatchLineups(fixtureId)
+    ]);
+
+    processed += 1;
+    if ((events?.length || 0) > 0 || (statistics?.length || 0) > 0 || (lineups?.length || 0) > 0) {
+      updated += 1;
+    }
+  }
+
+  return {
+    success: true,
+    processed,
+    updated,
+    remaining: await Match.countDocuments({
+      status: "finished",
+      $or: [
+        { "events.0": { $exists: false } },
+        { "statistics.0": { $exists: false } },
+        { "lineups.0": { $exists: false } }
+      ]
+    })
+  };
+};
+
 module.exports = {
   importAllMatches,
   importLeagueMatches,
@@ -679,8 +924,16 @@ module.exports = {
   getMatchEvents,
   getMatchStatistics,
   getMatchLineups,
+  getLeagueStandings,
+  resolveLeagueIdByName,
   findStoredMatchById,
   listMatches,
+  hydrateFinishedMatchesDetails,
+  getApiSportsStatus: () => ({
+    blocked: apiSportsBlockedUntil > Date.now(),
+    blockedUntil: apiSportsBlockedUntil || null,
+    lastError: apiSportsLastError,
+  }),
   LEAGUES,
   LIVE_STATUSES
 };

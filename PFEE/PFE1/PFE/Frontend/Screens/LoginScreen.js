@@ -4,13 +4,13 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, ImageBackground
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '../services/apiConfig';
 
 // Nouveaux imports pour Expo Auth Session
 import * as WebBrowser from 'expo-web-browser';
 import { useAuthRequest, makeRedirectUri } from 'expo-auth-session';
 
-const API_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-const API_URL = `http://${API_HOST}:3000/api/user`;
+const API_URL = `${API_BASE_URL}/api/user`;
 
 // Obligatoire pour refermer la fenêtre web automatiquement après la connexion
 WebBrowser.maybeCompleteAuthSession();
@@ -18,6 +18,12 @@ WebBrowser.maybeCompleteAuthSession();
 export default function LoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [captchaId, setCaptchaId] = useState('');
+  const [captchaChallenge, setCaptchaChallenge] = useState('');
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [captchaMode, setCaptchaMode] = useState('server');
+  const [captchaError, setCaptchaError] = useState('');
+  const [captchaLoading, setCaptchaLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
@@ -50,16 +56,53 @@ export default function LoginScreen({ navigation, route }) {
     }
   }, [response]);
 
+  const fetchCaptcha = async () => {
+    setCaptchaLoading(true);
+    setCaptchaError('');
+    try {
+      const response = await fetch(`${API_URL}/captcha`);
+      const data = await response.json();
+
+      if (!response.ok || !data?.captchaId || !data?.challenge) {
+        throw new Error(data?.message || 'Impossible de charger le captcha.');
+      }
+
+      setCaptchaMode('server');
+      setCaptchaId(data.captchaId);
+      setCaptchaChallenge(data.challenge);
+      setCaptchaAnswer('');
+    } catch (error) {
+      // Fallback local: utile quand l'API ne fournit pas encore /captcha.
+      const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let localCode = '';
+      for (let i = 0; i < 5; i += 1) {
+        localCode += charset[Math.floor(Math.random() * charset.length)];
+      }
+
+      setCaptchaMode('local');
+      setCaptchaId('');
+      setCaptchaChallenge(localCode);
+      setCaptchaAnswer('');
+      setCaptchaError('Captcha local actif (backend /captcha indisponible).');
+    } finally {
+      setCaptchaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCaptcha();
+  }, []);
+
   const handleRedirectAfterLogin = () => {
     if (redirectTo === 'Favoris') {
-      navigation.replace('Home', { screen: 'Favoris' });
+      navigation.replace('MainTabs', { screen: 'Favoris' });
       return;
     }
     if (redirectTo === 'Profile') {
       navigation.replace('Profile');
       return;
     }
-    navigation.replace('Home', { screen: 'Home' });
+    navigation.replace('MainTabs', { screen: 'Home' });
   };
 
   const handleLogin = async () => {
@@ -76,16 +119,49 @@ export default function LoginScreen({ navigation, route }) {
       return;
     }
 
+    if (!captchaId || !captchaAnswer.trim()) {
+      if (captchaMode === 'server') {
+        Alert.alert('Erreur', 'Veuillez saisir le captcha.');
+        return;
+      }
+    }
+
+    if (captchaMode === 'local') {
+      if (!captchaAnswer.trim()) {
+        Alert.alert('Erreur', 'Veuillez saisir le captcha.');
+        return;
+      }
+
+      if (captchaAnswer.trim().toUpperCase() !== captchaChallenge.toUpperCase()) {
+        Alert.alert('Erreur', 'Captcha invalide.');
+        fetchCaptcha();
+        return;
+      }
+    }
+
     setLoading(true);
     try {
+      const requestBody = captchaMode === 'server'
+        ? {
+            email: normalizedEmail,
+            password,
+            captchaId,
+            captchaAnswer: captchaAnswer.trim(),
+          }
+        : {
+            email: normalizedEmail,
+            password,
+          };
+
       const response = await fetch(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail, password }),
+        body: JSON.stringify(requestBody),
       });
       const data = await response.json();
       if (!response.ok) {
         Alert.alert('Erreur', data.error || data.message || 'Connexion impossible.');
+        fetchCaptcha();
         return;
       }
       await AsyncStorage.setItem('userToken', data.token);
@@ -181,7 +257,7 @@ export default function LoginScreen({ navigation, route }) {
               <Text style={styles.heroText}>
                 Parcourez les matchs, le live et les news librement. Connectez-vous seulement pour les favoris et le profil.
               </Text>
-              <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.9} onPress={() => navigation.replace('Home', { screen: 'Home' })}>
+              <TouchableOpacity style={styles.secondaryButton} activeOpacity={0.9} onPress={() => navigation.replace('MainTabs', { screen: 'Home' })}>
                 <Text style={styles.secondaryButtonText}>Continuer sans compte</Text>
               </TouchableOpacity>
             </View>
@@ -189,6 +265,7 @@ export default function LoginScreen({ navigation, route }) {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Connexion</Text>
               <Text style={styles.cardSubtitle}>{subtitle}</Text>
+              {!!captchaError && <Text style={styles.captchaErrorText}>{captchaError}</Text>}
 
               <TextInput 
                 style={styles.input} 
@@ -210,10 +287,38 @@ export default function LoginScreen({ navigation, route }) {
                 secureTextEntry 
               />
 
+              <View style={styles.captchaRow}>
+                <View style={styles.captchaChallengeBox}>
+                  {captchaLoading ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.captchaChallengeText}>{captchaChallenge || '-----'}</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={styles.captchaRefreshButton}
+                  onPress={fetchCaptcha}
+                  disabled={captchaLoading || loading || googleLoading}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.captchaRefreshText}>Actualiser</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Saisir le captcha"
+                placeholderTextColor="#7F8AA3"
+                value={captchaAnswer}
+                onChangeText={setCaptchaAnswer}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+
               <TouchableOpacity 
                 style={[styles.primaryButton, loading && styles.buttonDisabled]} 
                 onPress={handleLogin} 
-                disabled={loading || googleLoading} 
+                disabled={loading || googleLoading || captchaLoading} 
                 activeOpacity={0.9}
               >
                 {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryButtonText}>Se connecter</Text>}
@@ -276,7 +381,13 @@ const styles = StyleSheet.create({
   card: { flex: 1, maxWidth: Platform.OS === 'web' ? 420 : '100%', backgroundColor: 'rgba(11, 18, 32, 0.94)', borderWidth: 1, borderColor: '#15233A', borderRadius: 28, padding: 24, alignSelf: 'center', width: '100%' },
   cardTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '900' },
   cardSubtitle: { color: '#A9B6CC', fontSize: 14, lineHeight: 21, marginTop: 8, marginBottom: 22 },
+  captchaErrorText: { color: '#F7C948', fontSize: 12, marginBottom: 10, fontWeight: '700' },
   input: { backgroundColor: '#121C2E', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 14, color: '#FFFFFF', borderWidth: 1, borderColor: '#15233A', fontSize: 15 },
+  captchaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  captchaChallengeBox: { flex: 1, minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#2A3E63', backgroundColor: '#0F1728', justifyContent: 'center', paddingHorizontal: 14 },
+  captchaChallengeText: { color: '#FFFFFF', fontSize: 21, fontWeight: '900', letterSpacing: 4 },
+  captchaRefreshButton: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#2A3E63', backgroundColor: '#0F1A2D', justifyContent: 'center', paddingHorizontal: 12 },
+  captchaRefreshText: { color: '#E8EEF8', fontSize: 12, fontWeight: '800' },
   primaryButton: { marginTop: 8, backgroundColor: '#FF4D4D', borderRadius: 16, paddingVertical: 15, alignItems: 'center' },
   buttonDisabled: { opacity: 0.5 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '900' },

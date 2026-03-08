@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "start": "npm run start:backend",
+    "start:backend": "npm start --prefix \"PFEE/PFE1/PFE/Backend\"",
+    "start:frontend": "npm start --prefix \"PFEE/PFE1/PFE/Frontend\""
+  },
   "dependencies": {
     "node-fetch": "^3.3.2"
   }

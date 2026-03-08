@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const AuthenticatedUser = require("../User/UserModel");
 
 const router = express.Router();
@@ -149,6 +150,66 @@ const signUserToken = (user) => jwt.sign(
   { expiresIn: "7d" }
 );
 
+const CAPTCHA_SECRET = process.env.CAPTCHA_SECRET || "captcha_secret_fallback_123";
+const CAPTCHA_EXPIRATION_SECONDS = Number(process.env.CAPTCHA_EXPIRATION_SECONDS || 300);
+const CAPTCHA_LENGTH = 5;
+
+const generateCaptchaCode = (length = CAPTCHA_LENGTH) => {
+  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+
+  for (let i = 0; i < length; i += 1) {
+    const randomIndex = crypto.randomInt(0, charset.length);
+    code += charset[randomIndex];
+  }
+
+  return code;
+};
+
+const hashCaptchaAnswer = (answer) => crypto
+  .createHash("sha256")
+  .update(String(answer || "").trim().toUpperCase())
+  .digest("hex");
+
+const buildCaptchaChallenge = () => {
+  const code = generateCaptchaCode();
+  const answerHash = hashCaptchaAnswer(code);
+  const captchaId = jwt.sign(
+    { answerHash },
+    CAPTCHA_SECRET,
+    { expiresIn: CAPTCHA_EXPIRATION_SECONDS }
+  );
+
+  return {
+    captchaId,
+    challenge: code
+  };
+};
+
+const validateCaptcha = (captchaId, captchaAnswer) => {
+  if (!captchaId || !captchaAnswer) {
+    return { ok: false, message: "Captcha requis." };
+  }
+
+  try {
+    const payload = jwt.verify(captchaId, CAPTCHA_SECRET);
+    const providedHash = hashCaptchaAnswer(captchaAnswer);
+
+    if (payload?.answerHash !== providedHash) {
+      return { ok: false, message: "Captcha invalide." };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: "Captcha expire ou invalide." };
+  }
+};
+
+router.get("/captcha", authLimiter, (req, res) => {
+  const captchaData = buildCaptchaChallenge();
+  return res.status(200).json(captchaData);
+});
+
 router.post("/register", authLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
@@ -234,6 +295,8 @@ router.post("/register", authLimiter, async (req, res) => {
 router.post("/login", authLimiter, async (req, res) => {
   const normalizedEmail = normalizeEmail(req.body?.email);
   const password = req.body?.password || "";
+  const captchaId = req.body?.captchaId;
+  const captchaAnswer = req.body?.captchaAnswer;
 
   if (!normalizedEmail || !password) {
     return res.status(400).json(buildValidationResponse({
@@ -241,6 +304,16 @@ router.post("/login", authLimiter, async (req, res) => {
       errors: {
         email: !normalizedEmail ? "Adresse email requise." : undefined,
         password: !password ? "Mot de passe requis." : undefined
+      }
+    }));
+  }
+
+  const captchaValidation = validateCaptcha(captchaId, captchaAnswer);
+  if (!captchaValidation.ok) {
+    return res.status(400).json(buildValidationResponse({
+      message: captchaValidation.message,
+      errors: {
+        captcha: captchaValidation.message
       }
     }));
   }

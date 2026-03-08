@@ -13,9 +13,9 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '../services/apiConfig';
 
-const API_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-const API_URL = `http://${API_HOST}:3000/api/user`;
+const API_URL = `${API_BASE_URL}/api/user`;
 const EMAIL_REGEX = /^(?!.*\s)(?!\.)(?!.*\.\.)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 const USERNAME_REGEX = /^(?=.{3,20}$)[A-Za-z0-9._]+$/;
 const DISPOSABLE_DOMAINS = new Set([
@@ -141,7 +141,7 @@ export default function RegisterScreen({ navigation, route }) {
 
   const handleRedirectAfterRegister = () => {
     if (redirectTo === 'Favoris') {
-      navigation.replace('Home', { screen: 'Favoris' });
+      navigation.replace('MainTabs', { screen: 'Favoris' });
       return;
     }
 
@@ -150,7 +150,7 @@ export default function RegisterScreen({ navigation, route }) {
       return;
     }
 
-    navigation.replace('Home', { screen: 'Home' });
+    navigation.replace('MainTabs', { screen: 'Home' });
   };
 
   const handleRegister = async () => {
@@ -251,7 +251,7 @@ export default function RegisterScreen({ navigation, route }) {
               <TouchableOpacity
                 style={styles.secondaryButton}
                 activeOpacity={0.9}
-                onPress={() => navigation.replace('Home', { screen: 'Home' })}
+                onPress={() => navigation.replace('MainTabs', { screen: 'Home' })}
               >
                 <Text style={styles.secondaryButtonText}>Continuer sans compte</Text>
               </TouchableOpacity>

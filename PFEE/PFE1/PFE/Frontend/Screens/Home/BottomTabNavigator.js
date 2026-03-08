@@ -7,10 +7,15 @@ import HomeScreen from './HomeScreen';
 import LiveScreen from './LiveScreen';
 import FavoritesScreen from './FavoritesScreen';
 import NewsScreen from './NewsScreen';
+import { useAppTheme } from '../../src/theme/AppThemeContext';
+import { APP_THEME_COLORS } from '../../src/theme/colors';
 
 const Tab = createBottomTabNavigator();
 
 export default function BottomTabNavigator() {
+  const { isLight } = useAppTheme();
+  const palette = isLight ? APP_THEME_COLORS.light : APP_THEME_COLORS.dark;
+
   const protectFavorites = async (e, navigation) => {
     const token = await AsyncStorage.getItem('userToken');
 
@@ -31,21 +36,21 @@ export default function BottomTabNavigator() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#07111F',
+          backgroundColor: palette.card,
           borderTopWidth: 1,
-          borderTopColor: '#15233A',
+          borderTopColor: palette.border,
           height: 66,
           paddingTop: 8,
           paddingBottom: 8,
         },
-        tabBarActiveTintColor: '#FF4D4D',
-        tabBarInactiveTintColor: '#7F8AA3',
+        tabBarActiveTintColor: palette.primary,
+        tabBarInactiveTintColor: palette.muted,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '800',
         },
         sceneStyle: {
-          backgroundColor: '#050B16',
+          backgroundColor: palette.background,
         },
         tabBarIcon: ({ color, size }) => {
           let iconName = 'ellipse-outline';

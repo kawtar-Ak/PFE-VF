@@ -6,6 +6,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const userRoutes = require("./User/UserRoute.js");
 const matchRoutes = require("./Match/MatchRoute.js");
+const newsRoutes = require("./News/newsRoute");
 const {
   importAllMatches,
   pollLiveMatchesAndEmitUpdates,
@@ -18,15 +19,28 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/PFE";
 const LIVE_POLL_INTERVAL_MS = Number(process.env.LIVE_POLL_INTERVAL_MS || 60000);
-const SCHEDULED_POLL_INTERVAL_MS = Number(process.env.SCHEDULED_POLL_INTERVAL_MS || 60000);
+const SCHEDULED_POLL_INTERVAL_MS = Number(
+  process.env.SCHEDULED_POLL_INTERVAL_MS ||
+  process.env.MATCH_IMPORT_INTERVAL_MS ||
+  300000
+);
+const ALLOWED_ORIGINS = String(process.env.CORS_ORIGINS || "http://localhost:8081,http://localhost:19006,http://localhost:3000")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const io = initSocket(server);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({
-  origin: "*",
-  credentials: true,
+  origin(origin, callback) {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: false,
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
@@ -49,6 +63,8 @@ mongoose
   .connect(MONGO_URI)
   .then(() => {
     console.log("MongoDB connected to", MONGO_URI);
+    console.log("Live poll interval (ms):", LIVE_POLL_INTERVAL_MS);
+    console.log("Scheduled import interval (ms):", SCHEDULED_POLL_INTERVAL_MS);
     console.log("Importing matches from API-Sports...");
 
     importAllMatches(io).catch((error) => {
@@ -75,6 +91,7 @@ mongoose
 app.use("/api/user", userRoutes);
 app.use("/api/match", matchRoutes);
 app.use("/api/matches", matchRoutes);
+app.use("/api/news", newsRoutes);
 
 app.get("/", (req, res) => {
   res.json({ status: "Server is running" });

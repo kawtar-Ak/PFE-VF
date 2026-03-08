@@ -13,11 +13,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { matchService } from "../../services/matchService";
 import { favoritesService } from "../../services/favoritesService";
 import TeamLogo from "../../components/TeamLogo";
+import LeagueLogo from "../../components/LeagueLogo";
+import { getMatchPhase } from "../../utils/matchStatus";
+import { BRAND_COLORS } from "../../src/theme/colors";
+
+const LIVE_ACCENT = "#e84a5f";
+const LIVE_BADGE_BG = "#ffe3e8";
 
 const LIVE_WINDOW_PAST_MS = 2 * 60 * 60 * 1000;
 const LIVE_WINDOW_FUTURE_MS = 4 * 60 * 60 * 1000;
 
-const isLiveStatus = (status) => String(status || "").toLowerCase() === "live";
+const isLiveStatus = (match) => getMatchPhase(match) === "live";
 
 const isInLiveWindow = (matchDate) => {
   const date = new Date(matchDate);
@@ -31,7 +37,7 @@ const isInLiveWindow = (matchDate) => {
 
 const normalizeLiveMatches = (matches) => {
   const liveOnly = Array.isArray(matches)
-    ? matches.filter((match) => isLiveStatus(match.status) && isInLiveWindow(match.date))
+    ? matches.filter((match) => isLiveStatus(match) && isInLiveWindow(match.date))
     : [];
 
   return liveOnly.sort((left, right) => new Date(left.date) - new Date(right.date));
@@ -116,6 +122,13 @@ export default function LiveScreen({ navigation }) {
     }));
   };
 
+  const openLeagueCompetition = (league, leagueMeta) => {
+    navigation?.getParent?.()?.navigate('LeagueCompetition', {
+      league,
+      leagueMeta: leagueMeta || { league },
+    });
+  };
+
   const grouped = useMemo(() => {
     const byLeague = {};
 
@@ -129,18 +142,25 @@ export default function LiveScreen({ navigation }) {
       .sort((left, right) => left[0].localeCompare(right[0]))
       .map(([league, leagueMatches]) => ({
         title: league,
+        leagueMeta: leagueMatches[0] || { league },
         data: expandedLeagues[league] === false ? [] : leagueMatches,
       }));
   }, [expandedLeagues, matches]);
 
-  const renderSectionHeader = ({ section: { title } }) => (
-    <TouchableOpacity style={styles.leagueHeader} onPress={() => toggleLeague(title)} activeOpacity={0.9}>
+  const renderSectionHeader = ({ section: { title, leagueMeta } }) => (
+    <TouchableOpacity
+      style={styles.leagueHeader}
+      onPress={() => openLeagueCompetition(title, leagueMeta)}
+      onLongPress={() => toggleLeague(title)}
+      activeOpacity={0.9}
+    >
       <View style={styles.leagueHeaderLeft}>
         <Ionicons
-          name={expandedLeagues[title] === false ? "chevron-forward" : "chevron-down"}
+          name="chevron-forward"
           size={20}
-          color="#ef4444"
+          color={LIVE_ACCENT}
         />
+        <LeagueLogo source={leagueMeta} size={18} style={styles.leagueHeaderLogo} />
         <Text style={styles.leagueTitle} numberOfLines={1}>{title}</Text>
       </View>
       <Text style={styles.leagueCount}>
@@ -178,7 +198,7 @@ export default function LiveScreen({ navigation }) {
               <Ionicons
                 name={isFavorite ? "star" : "star-outline"}
                 size={20}
-                color={isFavorite ? "#ef4444" : "#94a3b8"}
+                color={isFavorite ? LIVE_ACCENT : "#64748b"}
               />
             </TouchableOpacity>
           </View>
@@ -187,7 +207,7 @@ export default function LiveScreen({ navigation }) {
         <View style={styles.matchContent}>
           <View style={styles.teamSection}>
             <View style={[styles.teamRow, styles.teamRowHome]}>
-              <TeamLogo uri={item.homeTeamLogo} size={22} />
+              <TeamLogo uri={item.homeTeamLogo} size={28} />
               <Text style={[styles.teamName, styles.teamNameHome]} numberOfLines={1}>{item.homeTeam}</Text>
             </View>
           </View>
@@ -201,7 +221,7 @@ export default function LiveScreen({ navigation }) {
           <View style={styles.teamSection}>
             <View style={[styles.teamRow, styles.teamRowAway]}>
               <Text style={[styles.teamName, styles.teamNameAway]} numberOfLines={1}>{item.awayTeam}</Text>
-              <TeamLogo uri={item.awayTeamLogo} size={22} />
+              <TeamLogo uri={item.awayTeamLogo} size={28} />
             </View>
           </View>
         </View>
@@ -216,7 +236,7 @@ export default function LiveScreen({ navigation }) {
           <Text style={styles.title}>Matches en direct</Text>
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#ef4444" />
+          <ActivityIndicator size="large" color={LIVE_ACCENT} />
           <Text style={styles.loadingText}>Chargement...</Text>
         </View>
       </View>
@@ -234,7 +254,7 @@ export default function LiveScreen({ navigation }) {
 
       {matches.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="radio-outline" size={48} color="#94a3b8" />
+          <Ionicons name="radio-outline" size={48} color="#64748b" />
           <Text style={styles.emptyText}>Aucun match en direct</Text>
         </View>
       ) : (
@@ -245,7 +265,7 @@ export default function LiveScreen({ navigation }) {
           renderSectionHeader={renderSectionHeader}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#ef4444" />
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={LIVE_ACCENT} />
           }
         />
       )}
@@ -254,27 +274,27 @@ export default function LiveScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#020617" },
+  container: { flex: 1, backgroundColor: "#f4f7fc" },
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#0f172a",
+    backgroundColor: "#10243e",
     borderBottomWidth: 1,
-    borderBottomColor: "#1e293b",
+    borderBottomColor: "#1f3a5a",
   },
   headerTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
   },
-  title: { fontSize: 22, fontWeight: "bold", color: "#fff" },
-  liveDot: { color: "#ef4444", fontSize: 18, marginTop: 2 },
+  title: { fontSize: 22, fontWeight: "bold", color: "#ffffff" },
+  liveDot: { color: LIVE_ACCENT, fontSize: 18, marginTop: 2 },
 
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 12, color: "#94a3b8", fontSize: 16 },
+  loadingText: { marginTop: 12, color: "#5b6f86", fontSize: 16 },
 
   emptyContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyText: { marginTop: 12, color: "#94a3b8", fontSize: 16 },
+  emptyText: { marginTop: 12, color: "#5b6f86", fontSize: 16 },
 
   listContent: { paddingVertical: 8 },
 
@@ -282,18 +302,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#0f172a",
+    backgroundColor: "#edf3fb",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#1e293b",
+    borderBottomColor: "#d5dfec",
   },
   leagueHeaderLeft: { flexDirection: "row", alignItems: "center", flex: 1, gap: 8 },
-  leagueTitle: { fontSize: 15, fontWeight: "700", color: "#fff", flex: 1 },
+  leagueHeaderLogo: { backgroundColor: "#ffffff", borderWidth: 0 },
+  leagueTitle: { fontSize: 15, fontWeight: "700", color: "#10243e", flex: 1 },
   leagueCount: {
     fontSize: 12,
-    color: "#fff",
-    backgroundColor: "#ef4444",
+    color: "#ffffff",
+    backgroundColor: LIVE_ACCENT,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -301,13 +322,15 @@ const styles = StyleSheet.create({
   },
 
   matchCard: {
-    backgroundColor: "#0f172a",
-    borderRadius: 10,
-    padding: 12,
-    marginHorizontal: 8,
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    padding: 14,
+    marginHorizontal: 10,
     marginVertical: 6,
     borderLeftWidth: 4,
-    borderLeftColor: "#ef4444",
+    borderLeftColor: LIVE_ACCENT,
+    borderWidth: 1,
+    borderColor: "#d5dfec",
   },
   matchHeader: {
     flexDirection: "row",
@@ -317,7 +340,7 @@ const styles = StyleSheet.create({
   },
   matchRightSection: { flexDirection: "row", alignItems: "center", gap: 8 },
   favoriteButton: { padding: 4 },
-  matchTime: { fontSize: 14, fontWeight: "700", color: "#fff" },
+  matchTime: { fontSize: 14, fontWeight: "700", color: "#10243e" },
 
   liveBadge: {
     flexDirection: "row",
@@ -327,23 +350,25 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 6,
     borderWidth: 1,
-    borderColor: "#334155",
-    backgroundColor: "#7f1d1d",
+    borderColor: "#f5b6c1",
+    backgroundColor: LIVE_BADGE_BG,
   },
-  livePulse: { fontSize: 14, color: "#ef4444" },
-  liveText: { fontSize: 12, fontWeight: "900", color: "#ef4444" },
+  livePulse: { fontSize: 14, color: LIVE_ACCENT },
+  liveText: { fontSize: 12, fontWeight: "900", color: LIVE_ACCENT },
 
   matchContent: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   teamSection: { flex: 1 },
   teamRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   teamRowHome: { justifyContent: "flex-start" },
   teamRowAway: { justifyContent: "flex-end" },
-  teamName: { fontSize: 12, fontWeight: "700", color: "#e2e8f0" },
+  teamName: { fontSize: 12, fontWeight: "700", color: "#10243e" },
   teamNameHome: { textAlign: "left", flex: 1 },
   teamNameAway: { textAlign: "right", flex: 1 },
 
   scoreSection: { flexDirection: "row", alignItems: "center", justifyContent: "center", minWidth: 72 },
   score: { fontSize: 18, fontWeight: "900" },
-  scoreLive: { color: "#ef4444" },
+  scoreLive: { color: LIVE_ACCENT },
   scoreSeparator: { fontSize: 12, color: "#64748b", marginHorizontal: 8, fontWeight: "900" },
 });
+
+

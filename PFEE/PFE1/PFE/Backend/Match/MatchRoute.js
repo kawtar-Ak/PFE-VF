@@ -12,7 +12,11 @@ const {
   getMatchEvents,
   getMatchStatistics,
   getMatchLineups,
+  getLeagueStandings,
+  resolveLeagueIdByName,
   listMatches,
+  hydrateFinishedMatchesDetails,
+  getApiSportsStatus,
   LIVE_STATUSES
 } = require("../Match/importService");
 
@@ -164,6 +168,40 @@ router.get("/import/leagues", async (req, res) => {
   }
 });
 
+router.get("/provider/status", async (req, res) => {
+  try {
+    const status = getApiSportsStatus ? getApiSportsStatus() : { blocked: false, blockedUntil: null, lastError: null };
+    res.status(200).json({ provider: "api-sports", ...status });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET standings by league id + season
+router.get("/standings", async (req, res) => {
+  try {
+    const leagueFromQuery = req.query?.league;
+    const queryLeagueId = Number(req.query?.leagueId);
+    const resolvedFromName = resolveLeagueIdByName(leagueFromQuery);
+    const leagueId = Number.isInteger(queryLeagueId) ? queryLeagueId : resolvedFromName;
+    const seasonRaw = req.query?.season;
+    const season = seasonRaw !== undefined ? Number(seasonRaw) : undefined;
+
+    if (!Number.isInteger(leagueId)) {
+      return res.status(400).json({ error: "Provide leagueId (numeric) or league (exact name)" });
+    }
+
+    const standings = await getLeagueStandings(
+      leagueId,
+      Number.isInteger(season) ? season : undefined
+    );
+
+    res.status(200).json({ standings });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST import all matches
 router.post("/import/all", async (req, res) => {
   try {
@@ -179,6 +217,17 @@ router.post("/import/live/poll", async (req, res) => {
   try {
     const result = await pollLiveMatchesAndEmitUpdates();
     res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST hydrate stored finished matches with events/statistics/lineups
+router.post("/import/finished/details", async (req, res) => {
+  try {
+    const limit = Number(req.query?.limit);
+    const result = await hydrateFinishedMatchesDetails(Number.isInteger(limit) ? limit : 20);
+    res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -233,6 +282,33 @@ router.get("/:id/lineups", async (req, res) => {
     res.status(200).json({ lineups });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST force import details (events/statistics/lineups) for one match
+router.post("/:id/import/details", async (req, res) => {
+  try {
+    const matchId = parseMatchId(req.params.id);
+    if (!matchId) {
+      return res.status(400).json({ error: "Invalid match id" });
+    }
+
+    const [events, statistics, lineups] = await Promise.all([
+      getMatchEvents(matchId),
+      getMatchStatistics(matchId),
+      getMatchLineups(matchId)
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      imported: {
+        events: Array.isArray(events) ? events.length : 0,
+        statisticsTeams: Array.isArray(statistics) ? statistics.length : 0,
+        lineupsTeams: Array.isArray(lineups) ? lineups.length : 0
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 });
 

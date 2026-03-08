@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 
-export default function TeamLogo({ uri, size = 24, style }) {
+export default function TeamLogo({ uri, size = 24, style, fallbackSource = null }) {
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
@@ -12,6 +12,20 @@ export default function TeamLogo({ uri, size = 24, style }) {
   const radius = Math.round(resolvedSize / 2);
 
   if (!uri || hasError) {
+    if (fallbackSource) {
+      return (
+        <Image
+          source={fallbackSource}
+          style={[
+            styles.logo,
+            { width: resolvedSize, height: resolvedSize, borderRadius: radius },
+            style,
+          ]}
+          resizeMode="contain"
+        />
+      );
+    }
+
     return (
       <View
         style={[
