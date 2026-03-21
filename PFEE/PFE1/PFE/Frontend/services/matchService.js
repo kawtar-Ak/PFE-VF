@@ -4,6 +4,46 @@ import { API_BASE_URL } from './apiConfig';
 const API_URL = `${API_BASE_URL}/api/match`;
 const SOCKET_URL = API_BASE_URL;
 const loggedErrors = new Set();
+
+const readJsonSafely = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+const fetchJson = async (url, options, scope) => {
+  try {
+    const response = await fetch(url, options);
+    const payload = await readJsonSafely(response);
+
+    if (!response.ok) {
+      const message =
+        payload?.error ||
+        payload?.message ||
+        `HTTP ${response.status}`;
+      throw new Error(message);
+    }
+
+    return payload || {};
+  } catch (error) {
+    logRequestError(scope, error);
+    throw error;
+  }
+};
+
+const getFriendlyMatchError = (error) => {
+  const message = String(error?.message || '').trim();
+  const lowered = message.toLowerCase();
+
+  if (!message || lowered.includes('network request failed')) {
+    return 'Backend des matchs indisponible. Verifie que le serveur tourne sur le port 3000.';
+  }
+
+  return `Impossible de charger les matchs: ${message}`;
+};
+
 const normalizeLineupPlayers = (players) => {
   if (!Array.isArray(players)) return [];
 
@@ -61,15 +101,24 @@ const logRequestError = (scope, error) => {
 };
 
 export const matchService = {
-  getAllMatches: async () => {
+  getAllMatchesState: async () => {
     try {
-      const response = await fetch(`${API_URL}/`);
-      const data = await response.json();
-      return data.matches || [];
+      const data = await fetchJson(`${API_URL}/`, undefined, 'getAllMatches');
+      return {
+        matches: Array.isArray(data?.matches) ? data.matches : [],
+        error: '',
+      };
     } catch (error) {
-      logRequestError('getAllMatches', error);
-      return [];
+      return {
+        matches: [],
+        error: getFriendlyMatchError(error),
+      };
     }
+  },
+
+  getAllMatches: async () => {
+    const { matches } = await matchService.getAllMatchesState();
+    return matches;
   },
 
   getMatchesByLeague: async (league) => {

@@ -18,6 +18,7 @@ export default function MatchesScreen() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [matchesError, setMatchesError] = useState('');
 
   useEffect(() => {
     loadMatches();
@@ -25,15 +26,21 @@ export default function MatchesScreen() {
 
   const loadMatches = async () => {
     setLoading(true);
-    const matchesData = await matchService.getAllMatches();
-    setMatches(matchesData);
+    const { matches: matchesData, error } = await matchService.getAllMatchesState();
+    setMatchesError(error);
+    if (!error) {
+      setMatches(matchesData);
+    }
     setLoading(false);
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    const matchesData = await matchService.getAllMatches();
-    setMatches(matchesData);
+    const { matches: matchesData, error } = await matchService.getAllMatchesState();
+    setMatchesError(error);
+    if (!error) {
+      setMatches(matchesData);
+    }
     setRefreshing(false);
   };
 
@@ -129,9 +136,17 @@ export default function MatchesScreen() {
         </View>
       ) : matches.length === 0 ? (
         <View style={styles.centerContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#94a3b8" />
-          <Text style={styles.emptyText}>Aucun match disponible</Text>
-          <Text style={styles.emptySubtext}>Importez les matches depuis l'API</Text>
+          <Ionicons
+            name={matchesError ? 'cloud-offline-outline' : 'alert-circle-outline'}
+            size={48}
+            color={matchesError ? '#ef4444' : '#94a3b8'}
+          />
+          <Text style={styles.emptyText}>
+            {matchesError ? 'Backend indisponible' : 'Aucun match disponible'}
+          </Text>
+          <Text style={styles.emptySubtext}>
+            {matchesError || "Importez les matches depuis l'API"}
+          </Text>
         </View>
       ) : (
         <FlatList

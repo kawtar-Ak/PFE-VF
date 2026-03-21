@@ -57,6 +57,7 @@ export default function HomeScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLogged, setIsLogged] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState(new Set());
+  const [matchesError, setMatchesError] = useState('');
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -161,12 +162,19 @@ export default function HomeScreen({ navigation }) {
   const loadMatches = async (withImport = false) => {
     try {
       setLoading(true);
+      setMatchesError('');
 
       if (withImport) {
         await matchService.importAllMatches();
       }
 
-      const matchesData = await matchService.getAllMatches();
+      const { matches: matchesData, error } = await matchService.getAllMatchesState();
+      setMatchesError(error);
+
+      if (error) {
+        return;
+      }
+
       const nextMatches = Array.isArray(matchesData) ? matchesData : [];
       setMatches(nextMatches);
 
@@ -181,6 +189,7 @@ export default function HomeScreen({ navigation }) {
       });
     } catch (error) {
       console.error('Erreur chargement matchs:', error);
+      setMatchesError('Impossible de charger les matchs pour le moment.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -645,14 +654,39 @@ export default function HomeScreen({ navigation }) {
         }
         ListEmptyComponent={
           <View style={styles.emptyWrap}>
-            <Ionicons name="football-outline" size={40} color={COLORS.textSoft} />
-            <Text style={styles.emptyTitle}>Aucun match trouve</Text>
-            <Text style={styles.emptySubtitle}>
-              Essaie une autre date ou une autre recherche.
+            <Ionicons
+              name={matchesError ? 'alert-circle-outline' : 'football-outline'}
+              size={40}
+              color={matchesError ? COLORS.accent : COLORS.textSoft}
+            />
+            <Text style={styles.emptyTitle}>
+              {matchesError ? 'Backend indisponible' : 'Aucun match trouve'}
             </Text>
+            <Text style={styles.emptySubtitle}>
+              {matchesError || 'Essaie une autre date ou une autre recherche.'}
+            </Text>
+            {matchesError ? (
+              <TouchableOpacity
+                style={styles.emptyRetryButton}
+                onPress={() => loadMatches()}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.emptyRetryText}>Reessayer</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         }
       />
+
+      {matchesError && matches.length > 0 ? (
+        <View style={styles.errorBox}>
+          <Ionicons name="alert-circle-outline" size={16} color="#B3263D" />
+          <Text style={styles.errorText}>{matchesError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => loadMatches()}>
+            <Text style={styles.retryText}>Reessayer</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1171,6 +1205,57 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
+  },
+
+  emptyRetryButton: {
+    marginTop: 14,
+    borderRadius: 999,
+    backgroundColor: '#ffd8c9',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+
+  emptyRetryText: {
+    color: COLORS.third,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+
+  errorBox: {
+    marginHorizontal: 12,
+    marginBottom: 12,
+    marginTop: 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    backgroundColor: '#fff1f1',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  errorText: {
+    flex: 1,
+    color: '#B3263D',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  retryButton: {
+    borderRadius: 999,
+    backgroundColor: '#ffd8c9',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+
+  retryText: {
+    color: COLORS.third,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
 });
 
