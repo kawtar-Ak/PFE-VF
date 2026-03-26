@@ -26,12 +26,57 @@ const SCHEDULED_POLL_INTERVAL_MS = Number(
   process.env.MATCH_IMPORT_INTERVAL_MS ||
   300000
 );
-const ALLOWED_ORIGINS = String(process.env.CORS_ORIGINS || "http://localhost:8081,http://localhost:19006,http://localhost:3000")
+const ALLOWED_ORIGINS = String(
+  process.env.CORS_ORIGINS ||
+  "http://localhost:8081,http://localhost:19006,http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:19006,http://127.0.0.1:3000"
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
 const io = initSocket(server);
+
+const isPrivateIpv4Host = (hostname = "") => {
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+    return true;
+  }
+
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+    return true;
+  }
+
+  const match = hostname.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (!match) {
+    return false;
+  }
+
+  const secondOctet = Number(match[1]);
+  return secondOctet >= 16 && secondOctet <= 31;
+};
+
+const isAllowedOrigin = (origin) => {
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(origin);
+    const hostname = String(parsed.hostname || "").trim();
+
+    if (!/^https?:$/.test(parsed.protocol)) {
+      return false;
+    }
+
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      isPrivateIpv4Host(hostname)
+    );
+  } catch (error) {
+    return false;
+  }
+};
 
 const isExistingKicklyServerRunning = async (port) => {
   try {
@@ -54,7 +99,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked for origin: ${origin}`));

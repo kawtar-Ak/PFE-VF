@@ -26,6 +26,10 @@ const IMPORT_PAST_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_IMPORT_PAST_DAYS
 const IMPORT_FUTURE_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_IMPORT_FUTURE_DAYS", 3));
 const REFRESH_PAST_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_REFRESH_PAST_DAYS", 0));
 const REFRESH_FUTURE_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_REFRESH_FUTURE_DAYS", IMPORT_FUTURE_DAYS));
+const API_SPORTS_RATE_LIMIT_BACKOFF_MS = Math.max(
+  15 * 1000,
+  readNumberEnv("APISPORTS_RATE_LIMIT_BACKOFF_MS", 75 * 1000)
+);
 
 const LIVE_STATUSES = new Set(["1H", "2H", "HT", "ET", "P"]);
 const FINISHED_STATUSES = new Set(["FT", "AET", "PEN"]);
@@ -60,6 +64,43 @@ const getCurrentSeason = () => {
 };
 
 const formatDate = (date) => date.toISOString().slice(0, 10);
+
+const getNextUtcMidnight = () => {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
+};
+
+const applyApiSportsBlock = (message, fallbackDurationMs = API_SPORTS_RATE_LIMIT_BACKOFF_MS) => {
+  const lowered = String(message || "").toLowerCase();
+
+  if (!lowered) {
+    return false;
+  }
+
+  let blockedUntil = 0;
+
+  if (
+    lowered.includes("reached the request limit") ||
+    lowered.includes("per day") ||
+    lowered.includes("daily limit")
+  ) {
+    blockedUntil = getNextUtcMidnight();
+  } else if (
+    lowered.includes("rate limit") ||
+    lowered.includes("too many requests") ||
+    lowered.includes("per minute") ||
+    lowered.includes("requests per minute")
+  ) {
+    blockedUntil = Date.now() + fallbackDurationMs;
+  }
+
+  if (!blockedUntil) {
+    return false;
+  }
+
+  apiSportsBlockedUntil = Math.max(apiSportsBlockedUntil, blockedUntil);
+  return true;
+};
 
 const getDateWindow = (options = {}) => {
   const pastDays = sanitizeDayWindow(options.pastDays ?? IMPORT_PAST_DAYS);
@@ -131,9 +172,7 @@ const requestApiSports = async (path, params = {}) => {
       };
 
       if (response.status === 429) {
-        const now = new Date();
-        const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
-        apiSportsBlockedUntil = nextUtcMidnight;
+        applyApiSportsBlock(body || response.statusText || "429");
       }
 
       console.error(`API-Sports error ${response.status}: ${response.statusText} ${body}`);
@@ -142,14 +181,22 @@ const requestApiSports = async (path, params = {}) => {
 
     const payload = await response.json();
     if (payload?.errors && Object.keys(payload.errors).length > 0) {
-      apiSportsLastError = payload.errors;
-      const requestsError = String(payload?.errors?.requests || "").toLowerCase();
-      if (requestsError.includes("reached the request limit")) {
-        // Stop hitting API-Sports until next UTC day to avoid burning calls.
-        const now = new Date();
-        const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
-        apiSportsBlockedUntil = nextUtcMidnight;
-        console.warn("API-Sports request limit reached. Blocking external calls until next UTC day.");
+      const errorMessage = Object.values(payload.errors)
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" | ");
+      const blocked = applyApiSportsBlock(errorMessage);
+      apiSportsLastError = {
+        ...payload.errors,
+        blocked,
+        blockedUntil: apiSportsBlockedUntil || null
+      };
+
+      if (blocked) {
+        console.warn(
+          "API-Sports request limit reached. Backing off until",
+          new Date(apiSportsBlockedUntil).toISOString()
+        );
       }
 
       console.error("API-Sports payload errors:", payload.errors);
@@ -188,8 +235,24 @@ const fetchFixturesByDate = async (date) => requestApiSports("/fixtures", {
 
 const fetchWindowFixtures = async (options = {}) => {
   const dates = getDateListFromWindow(options);
-  const fixturesByDay = await Promise.all(dates.map((date) => fetchFixturesByDate(date)));
-  return fixturesByDay.flat();
+  const today = formatDate(new Date());
+  const prioritizedDates = [
+    today,
+    ...dates.filter((date) => date > today),
+    ...dates.filter((date) => date < today).reverse()
+  ].filter((date, index, list) => list.indexOf(date) === index);
+  const fixtures = [];
+
+  for (const date of prioritizedDates) {
+    const dayFixtures = await fetchFixturesByDate(date);
+    fixtures.push(...dayFixtures);
+
+    if (apiSportsBlockedUntil > Date.now()) {
+      break;
+    }
+  }
+
+  return fixtures;
 };
 
 const fetchLiveFixtures = async () => requestApiSports("/fixtures", {

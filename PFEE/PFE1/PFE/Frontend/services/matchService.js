@@ -37,8 +37,13 @@ const getFriendlyMatchError = (error) => {
   const message = String(error?.message || '').trim();
   const lowered = message.toLowerCase();
 
-  if (!message || lowered.includes('network request failed')) {
-    return 'Backend des matchs indisponible. Verifie que le serveur tourne sur le port 3000.';
+  if (
+    !message ||
+    lowered.includes('network request failed') ||
+    lowered.includes('failed to fetch') ||
+    lowered.includes('load failed')
+  ) {
+    return 'Backend des matchs indisponible. Verifie le serveur sur le port 3000 et, si besoin, configure EXPO_PUBLIC_API_BASE_URL.';
   }
 
   return `Impossible de charger les matchs: ${message}`;

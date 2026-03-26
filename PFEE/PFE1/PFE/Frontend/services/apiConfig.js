@@ -1,6 +1,9 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
+const EXPLICIT_API_BASE_URL = String(process.env.EXPO_PUBLIC_API_BASE_URL || '').trim();
+const EXPLICIT_API_HOST = String(process.env.EXPO_PUBLIC_API_HOST || '').trim();
+
 const getHostFromExpo = () => {
   const hostUri =
     Constants?.expoConfig?.hostUri ||
@@ -15,6 +18,10 @@ const getHostFromExpo = () => {
 };
 
 export const getApiHost = () => {
+  if (EXPLICIT_API_HOST) {
+    return EXPLICIT_API_HOST;
+  }
+
   const expoHost = getHostFromExpo();
 
   if (Platform.OS === 'android') {
@@ -30,4 +37,6 @@ export const getApiHost = () => {
 };
 
 export const API_HOST = getApiHost();
-export const API_BASE_URL = `http://${API_HOST}:3000`;
+export const API_BASE_URL = EXPLICIT_API_BASE_URL
+  ? EXPLICIT_API_BASE_URL.replace(/\/+$/, '')
+  : `http://${API_HOST}:3000`;
