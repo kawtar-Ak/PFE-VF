@@ -12,8 +12,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../services/apiConfig';
+import { authStorage } from '../services/authStorage';
+import { favoritesService } from '../services/favoritesService';
+import { notificationService } from '../services/notificationService';
 
 const API_URL = `${API_BASE_URL}/api/user`;
 const EMAIL_REGEX = /^(?!.*\s)(?!\.)(?!.*\.\.)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -207,8 +209,9 @@ export default function RegisterScreen({ navigation, route }) {
         return;
       }
 
-      await AsyncStorage.setItem('userToken', data.token);
-      await AsyncStorage.setItem('userData', JSON.stringify(data.user));
+      await authStorage.setSession(data.token, data.user);
+      await favoritesService.syncWithServer();
+      await notificationService.bootstrapForAuthenticatedUser({ forcePermissionPrompt: true });
       handleRedirectAfterRegister();
     } catch (error) {
       Alert.alert('Erreur', 'Impossible de joindre le serveur.');

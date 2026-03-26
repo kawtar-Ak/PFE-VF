@@ -1,27 +1,15 @@
 const express = require("express");
-const { fetchBBCFootballNews } = require("./newsService");
-
 const router = express.Router();
+const { fetchBBCFootballNews } = require("./newsService");
 
 router.get("/", async (req, res) => {
   try {
-    const limitRaw = req.query?.limit;
-    if (limitRaw !== undefined && !Number.isInteger(Number(limitRaw))) {
-      return res.status(400).json({
-        error: "Query param 'limit' must be an integer."
-      });
-    }
-
-    const news = await fetchBBCFootballNews(limitRaw);
-
-    return res.status(200).json({
-      source: "BBC Sport",
-      count: news.length,
-      news
-    });
+    const parsedLimit = Number(req.query?.limit);
+    const news = await fetchBBCFootballNews(Number.isInteger(parsedLimit) ? parsedLimit : undefined);
+    res.json({ news });
   } catch (error) {
-    return res.status(502).json({
-      error: "Failed to fetch football news.",
+    res.status(500).json({
+      error: "Erreur recuperation news",
       message: error.message
     });
   }

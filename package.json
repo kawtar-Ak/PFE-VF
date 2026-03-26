@@ -1,8 +1,9 @@
 {
   "scripts": {
-    "start": "npm run start:backend",
+    "start": "powershell -ExecutionPolicy Bypass -File ./scripts/start-project.ps1",
     "start:backend": "npm start --prefix \"PFEE/PFE1/PFE/Backend\"",
-    "start:frontend": "npm start --prefix \"PFEE/PFE1/PFE/Frontend\""
+    "start:frontend": "npm start --prefix \"PFEE/PFE1/PFE/Frontend\"",
+    "start:frontend:no-open": "npm run start:no-open --prefix \"PFEE/PFE1/PFE/Frontend\""
   },
   "dependencies": {
     "node-fetch": "^3.3.2"

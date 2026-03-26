@@ -3,8 +3,10 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, ImageBackground
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../services/apiConfig';
+import { authStorage } from '../services/authStorage';
+import { favoritesService } from '../services/favoritesService';
+import { notificationService } from '../services/notificationService';
 
 // Nouveaux imports pour Expo Auth Session
 import * as WebBrowser from 'expo-web-browser';
@@ -164,8 +166,9 @@ export default function LoginScreen({ navigation, route }) {
         fetchCaptcha();
         return;
       }
-      await AsyncStorage.setItem('userToken', data.token);
-      await AsyncStorage.setItem('userData', JSON.stringify(data.user));
+      await authStorage.setSession(data.token, data.user);
+      await favoritesService.syncWithServer();
+      await notificationService.bootstrapForAuthenticatedUser({ forcePermissionPrompt: true });
       handleRedirectAfterLogin();
     } catch (error) {
       Alert.alert('Erreur', 'Impossible de se connecter au serveur.');
@@ -222,8 +225,9 @@ export default function LoginScreen({ navigation, route }) {
       
       // Étape 4: Succès - Stocker les données
       console.log("✅ Étape 5: Connexion réussie, stockage des données...");
-      await AsyncStorage.setItem('userToken', data.token);
-      await AsyncStorage.setItem('userData', JSON.stringify(data.user));
+      await authStorage.setSession(data.token, data.user);
+      await favoritesService.syncWithServer();
+      await notificationService.bootstrapForAuthenticatedUser({ forcePermissionPrompt: true });
       
       // Rediriger
       handleRedirectAfterLogin();

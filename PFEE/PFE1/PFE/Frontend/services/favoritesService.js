@@ -1,7 +1,22 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { authStorage } from './authStorage';
+import { notificationService } from './notificationService';
 
 const FAVORITES_KEY = 'football_favorites';
 const listeners = new Set();
+
+const getLocalMatchKey = (match) => String(
+  match?._id ||
+  match?.fixtureId ||
+  match?.matchId ||
+  match?.apiMatchId ||
+  ''
+);
+
+const getFixtureId = (match) => {
+  const fixtureId = Number(match?.fixtureId ?? match?.matchId ?? match?.apiMatchId);
+  return Number.isInteger(fixtureId) ? fixtureId : null;
+};
 
 const notifyListeners = () => {
   listeners.forEach((listener) => {
@@ -11,6 +26,21 @@ const notifyListeners = () => {
       console.error('Erreur listener favoris:', error);
     }
   });
+};
+
+const syncFavoritesToBackend = async (favorites) => {
+  const token = await authStorage.getToken();
+  if (!token) {
+    return;
+  }
+
+  const fixtureIds = [...new Set(
+    (favorites || [])
+      .map((match) => getFixtureId(match))
+      .filter((fixtureId) => Number.isInteger(fixtureId))
+  )];
+
+  await notificationService.syncFavoriteNotifications(fixtureIds);
 };
 
 export const favoritesService = {
@@ -32,7 +62,7 @@ export const favoritesService = {
   isFavorite: async (matchId) => {
     try {
       const favorites = await favoritesService.getFavorites();
-      return favorites.some((favorite) => favorite._id === matchId);
+      return favorites.some((favorite) => getLocalMatchKey(favorite) === String(matchId));
     } catch (error) {
       console.error('Erreur isFavorite:', error);
       return false;
@@ -42,13 +72,15 @@ export const favoritesService = {
   toggleFavorite: async (match) => {
     try {
       const favorites = await favoritesService.getFavorites();
-      const exists = favorites.some((favorite) => favorite._id === match._id);
+      const matchKey = getLocalMatchKey(match);
+      const exists = favorites.some((favorite) => getLocalMatchKey(favorite) === matchKey);
 
       const updatedFavorites = exists
-        ? favorites.filter((favorite) => favorite._id !== match._id)
+        ? favorites.filter((favorite) => getLocalMatchKey(favorite) !== matchKey)
         : [...favorites, match];
 
       await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(updatedFavorites));
+      await syncFavoritesToBackend(updatedFavorites);
       notifyListeners();
 
       return {
@@ -69,8 +101,9 @@ export const favoritesService = {
   removeFavorite: async (matchId) => {
     try {
       const favorites = await favoritesService.getFavorites();
-      const updatedFavorites = favorites.filter((favorite) => favorite._id !== matchId);
+      const updatedFavorites = favorites.filter((favorite) => getLocalMatchKey(favorite) !== String(matchId));
       await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(updatedFavorites));
+      await syncFavoritesToBackend(updatedFavorites);
       notifyListeners();
       return { ok: true, favorites: updatedFavorites };
     } catch (error) {
@@ -82,11 +115,23 @@ export const favoritesService = {
   clearFavorites: async () => {
     try {
       await AsyncStorage.removeItem(FAVORITES_KEY);
+      await syncFavoritesToBackend([]);
       notifyListeners();
       return { ok: true };
     } catch (error) {
       console.error('Erreur clearFavorites:', error);
       return { ok: false };
+    }
+  },
+
+  syncWithServer: async () => {
+    try {
+      const favorites = await favoritesService.getFavorites();
+      await syncFavoritesToBackend(favorites);
+      return { ok: true, favorites };
+    } catch (error) {
+      console.error('Erreur syncWithServer:', error);
+      return { ok: false, favorites: [] };
     }
   },
 };

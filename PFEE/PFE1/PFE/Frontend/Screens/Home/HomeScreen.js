@@ -40,6 +40,100 @@ const COLORS = {
   liveText: '#b32f45',
 };
 
+const startOfDay = (value) => {
+  const date = new Date(value);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+
+const buildCalendarDateRange = (anchorDate) => {
+  const dates = [];
+  const baseDate = startOfDay(anchorDate || new Date());
+
+  for (let index = -3; index < 5; index += 1) {
+    const nextDate = new Date(baseDate);
+    nextDate.setDate(nextDate.getDate() + index);
+    dates.push(nextDate);
+  }
+
+  return dates;
+};
+
+const sameCalendarDay = (leftValue, rightValue) => {
+  const leftDate = startOfDay(leftValue);
+  const rightDate = startOfDay(rightValue);
+
+  return (
+    leftDate.getDate() === rightDate.getDate() &&
+    leftDate.getMonth() === rightDate.getMonth() &&
+    leftDate.getFullYear() === rightDate.getFullYear()
+  );
+};
+
+const getClosestMatchDate = (matches, referenceDate) => {
+  const referenceDay = startOfDay(referenceDate);
+  const sortedDays = getAvailableMatchDays(matches);
+  if (sortedDays.length === 0) {
+    return referenceDay;
+  }
+
+  const exactMatch = sortedDays.find((day) => sameCalendarDay(day, referenceDay));
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return sortedDays.reduce((closestDay, currentDay) => {
+    const currentDistance = Math.abs(currentDay.getTime() - referenceDay.getTime());
+    const closestDistance = Math.abs(closestDay.getTime() - referenceDay.getTime());
+
+    if (currentDistance < closestDistance) {
+      return currentDay;
+    }
+
+    // In case of tie, prefer the future date so upcoming matches stay visible.
+    if (currentDistance === closestDistance && currentDay.getTime() > closestDay.getTime()) {
+      return currentDay;
+    }
+
+    return closestDay;
+  }, sortedDays[0]);
+};
+
+const getAvailableMatchDays = (matches) => {
+  const uniqueDays = new Map();
+
+  matches.forEach((match) => {
+    const matchDate = new Date(match?.date);
+    if (Number.isNaN(matchDate.getTime())) {
+      return;
+    }
+
+    const day = startOfDay(matchDate);
+    uniqueDays.set(day.getTime(), day);
+  });
+
+  return [...uniqueDays.values()].sort((left, right) => left - right);
+};
+
+const buildDateRange = (matches, anchorDate) => {
+  const sortedDays = getAvailableMatchDays(matches);
+  if (sortedDays.length === 0) {
+    return buildCalendarDateRange(anchorDate);
+  }
+
+  const closestDate = getClosestMatchDate(matches, anchorDate);
+  const centerIndex = Math.max(0, sortedDays.findIndex((day) => sameCalendarDay(day, closestDate)));
+  const windowSize = 8;
+
+  let startIndex = Math.max(0, centerIndex - 3);
+  let endIndex = Math.min(sortedDays.length, startIndex + windowSize);
+
+  if (endIndex - startIndex < windowSize) {
+    startIndex = Math.max(0, endIndex - windowSize);
+  }
+
+  return sortedDays.slice(startIndex, endIndex);
+};
+
 export default function HomeScreen({ navigation }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 960;
@@ -61,7 +155,7 @@ export default function HomeScreen({ navigation }) {
   const socketRef = useRef(null);
 
   useEffect(() => {
-    generateDateRange();
+    setDateRange(buildCalendarDateRange(new Date()));
     hydrateScreen();
 
     const unsubscribeFocus = navigation.addListener('focus', () => {
@@ -146,19 +240,6 @@ export default function HomeScreen({ navigation }) {
     setFavoriteIds(new Set((favorites || []).map((match) => match?._id).filter(Boolean)));
   };
 
-  const generateDateRange = () => {
-    const dates = [];
-    const today = new Date();
-
-    for (let index = -3; index < 5; index += 1) {
-      const nextDate = new Date(today);
-      nextDate.setDate(nextDate.getDate() + index);
-      dates.push(nextDate);
-    }
-
-    setDateRange(dates);
-  };
-
   const loadMatches = async (withImport = false) => {
     try {
       setLoading(true);
@@ -177,6 +258,14 @@ export default function HomeScreen({ navigation }) {
 
       const nextMatches = Array.isArray(matchesData) ? matchesData : [];
       setMatches(nextMatches);
+
+      const closestAvailableDate = getClosestMatchDate(nextMatches, selectedDate);
+      if (!sameCalendarDay(closestAvailableDate, selectedDate)) {
+        setSelectedDate(closestAvailableDate);
+        setDateRange(buildDateRange(nextMatches, closestAvailableDate));
+      } else {
+        setDateRange(buildDateRange(nextMatches, selectedDate));
+      }
 
       setExpandedLeagues((previous) => {
         const leagueMap = { ...previous };
@@ -210,11 +299,7 @@ export default function HomeScreen({ navigation }) {
   };
 
   const sameDay = (leftDate, rightDate) => {
-    return (
-      leftDate.getDate() === rightDate.getDate() &&
-      leftDate.getMonth() === rightDate.getMonth() &&
-      leftDate.getFullYear() === rightDate.getFullYear()
-    );
+    return sameCalendarDay(leftDate, rightDate);
   };
 
   const isToday = (date) => sameDay(date, new Date());
@@ -379,7 +464,13 @@ export default function HomeScreen({ navigation }) {
     const phase = getMatchPhase(item);
     const isLive = phase === 'live';
     const isFinished = phase === 'finished';
+    const isScheduled = !isLive && !isFinished;
     const isFavorite = favoriteIds.has(item._id);
+    const matchMeta = [
+      item?.round || null,
+      item?.stadium || item?.venue || null,
+      item?.city || null,
+    ].filter(Boolean).join(' • ');
 
     let statusLabel = 'A VENIR';
     let badgeContainerStyle = [styles.badge, styles.badgeScheduled];
@@ -442,13 +533,24 @@ export default function HomeScreen({ navigation }) {
           </View>
 
           <View style={styles.scoreColumn}>
-            <Text style={scoreTextStyle}>
-              {isFinished || isLive ? item.homeScore ?? '-' : '-'}
-            </Text>
-            <Text style={styles.scoreSeparator}>-</Text>
-            <Text style={scoreTextStyle}>
-              {isFinished || isLive ? item.awayScore ?? '-' : '-'}
-            </Text>
+            {isScheduled ? (
+              <Text style={styles.scoreScheduledLabel}>VS</Text>
+            ) : (
+              <View style={styles.scoreRowInline}>
+                <Text style={scoreTextStyle}>
+                  {item.homeScore ?? '-'}
+                </Text>
+                <Text style={styles.scoreSeparator}>-</Text>
+                <Text style={scoreTextStyle}>
+                  {item.awayScore ?? '-'}
+                </Text>
+              </View>
+            )}
+            {!!matchMeta && (
+              <Text style={styles.matchMetaText} numberOfLines={2}>
+                {matchMeta}
+              </Text>
+            )}
           </View>
 
           <View style={styles.teamColumn}>
@@ -1149,15 +1251,38 @@ const styles = StyleSheet.create({
 
   scoreColumn: {
     minWidth: 86,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  scoreRowInline: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  matchMetaText: {
+    marginTop: 6,
+    color: COLORS.textSoft,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 15,
+    maxWidth: 180,
   },
 
   score: {
     color: COLORS.third,
     fontSize: 22,
     fontWeight: '900',
+  },
+
+  scoreScheduledLabel: {
+    color: COLORS.textSoft,
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1.2,
   },
 
   scoreLive: {

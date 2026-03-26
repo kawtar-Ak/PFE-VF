@@ -186,7 +186,7 @@ export default function LeagueCompetitionScreen({ route, navigation }) {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()} activeOpacity={0.85}>
-          <Ionicons name="chevron-back" size={22} color="#FFFFFF" />
+          <Ionicons name="chevron-back" size={22} color="#0F172A" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <LeagueLogo source={leagueMeta} size={20} style={styles.headerLogo} />
@@ -316,16 +316,16 @@ export default function LeagueCompetitionScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#050B16' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: {
     paddingTop: 10,
     paddingHorizontal: 16,
     paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0B1220',
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#15233A',
+    borderBottomColor: '#E2E8F0',
   },
   backButton: {
     width: 42,
@@ -333,9 +333,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#121C2E',
+    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: '#E2E8F0',
   },
   headerCenter: {
     flex: 1,
@@ -345,45 +345,45 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 8,
   },
-  headerLogo: { backgroundColor: '#121C2E', borderWidth: 0 },
-  title: { flex: 1, color: '#FFFFFF', fontSize: 17, fontWeight: '900' },
+  headerLogo: { backgroundColor: '#F1F5F9', borderWidth: 0 },
+  title: { flex: 1, color: '#0F172A', fontSize: 17, fontWeight: '900' },
   headerSpacer: { width: 42 },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  loadingText: { marginTop: 10, color: '#A9B6CC', fontSize: 14, fontWeight: '700' },
+  loadingText: { marginTop: 10, color: '#475569', fontSize: 14, fontWeight: '700' },
   content: { padding: 16, paddingBottom: 28 },
   typeCard: {
-    backgroundColor: '#0B1220',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: '#E2E8F0',
     padding: 14,
   },
-  typeTitle: { color: '#7F8AA3', fontSize: 12, fontWeight: '800' },
-  typeValue: { marginTop: 4, color: '#E8EEF8', fontSize: 16, fontWeight: '900' },
+  typeTitle: { color: '#64748B', fontSize: 12, fontWeight: '800' },
+  typeValue: { marginTop: 4, color: '#0F172A', fontSize: 16, fontWeight: '900' },
   card: {
     marginTop: 12,
-    backgroundColor: '#0B1220',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: '#E2E8F0',
     padding: 14,
   },
-  sectionTitle: { color: '#E8EEF8', fontSize: 14, fontWeight: '900', marginBottom: 10 },
+  sectionTitle: { color: '#0F172A', fontSize: 14, fontWeight: '900', marginBottom: 10 },
   tableHeader: {
     flexDirection: 'row',
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#15233A',
+    borderBottomColor: '#E2E8F0',
   },
   tableRow: {
     flexDirection: 'row',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#101827',
+    borderBottomColor: '#F1F5F9',
     alignItems: 'center',
   },
-  headCell: { color: '#7F8AA3', fontSize: 11, fontWeight: '900' },
-  rowCell: { color: '#E8EEF8', fontSize: 12, fontWeight: '700' },
+  headCell: { color: '#64748B', fontSize: 11, fontWeight: '900' },
+  rowCell: { color: '#0F172A', fontSize: 12, fontWeight: '700' },
   colRank: { width: 30, textAlign: 'center' },
   colTeam: { width: 180 },
   colNum: { width: 38, textAlign: 'center' },
@@ -392,13 +392,13 @@ const styles = StyleSheet.create({
   colPts: { width: 44, textAlign: 'center' },
   colForm: { width: 74, alignItems: 'center', justifyContent: 'center' },
   teamCell: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
-  teamName: { color: '#E8EEF8', fontSize: 12, fontWeight: '800', flex: 1 },
-  pointsText: { fontWeight: '900', color: '#FFFFFF' },
+  teamName: { color: '#0F172A', fontSize: 12, fontWeight: '800', flex: 1 },
+  pointsText: { fontWeight: '900', color: '#0F172A' },
   formCell: { flexDirection: 'row' },
   formWrap: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   formDot: { width: 9, height: 9, borderRadius: 999 },
-  formEmpty: { color: '#7F8AA3', fontSize: 12, fontWeight: '700' },
+  formEmpty: { color: '#64748B', fontSize: 12, fontWeight: '700' },
   groupBlock: { marginTop: 8 },
-  groupTitle: { color: '#FF4D4D', fontSize: 13, fontWeight: '900', marginBottom: 8 },
-  emptyText: { color: '#A9B6CC', fontSize: 12, fontWeight: '700', paddingVertical: 4 },
+  groupTitle: { color: '#1D4ED8', fontSize: 13, fontWeight: '900', marginBottom: 8 },
+  emptyText: { color: '#475569', fontSize: 12, fontWeight: '700', paddingVertical: 4 },
 });

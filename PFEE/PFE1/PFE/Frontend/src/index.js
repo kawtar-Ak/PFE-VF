@@ -11,6 +11,8 @@ import MatchDetailsScreen from "../Screens/Home/MatchDetailsScreen";
 import LeagueCompetitionScreen from "../Screens/Home/LeagueCompetitionScreen";
 import ProfileScreen from "../Screens/ProfileScreen";
 import { AppThemeProvider, useAppTheme } from './theme/AppThemeContext';
+import { favoritesService } from '../services/favoritesService';
+import { notificationService } from '../services/notificationService';
 
 const Stack = createNativeStackNavigator();
 
@@ -83,6 +85,27 @@ function AppRoot() {
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 3000);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const bootstrapUserNotifications = async () => {
+      try {
+        await favoritesService.syncWithServer();
+        await notificationService.bootstrapForAuthenticatedUser();
+      } catch (error) {
+        if (mounted) {
+          console.warn('Bootstrap notifications impossible:', error?.message || error);
+        }
+      }
+    };
+
+    bootstrapUserNotifications();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   if (showSplash) {

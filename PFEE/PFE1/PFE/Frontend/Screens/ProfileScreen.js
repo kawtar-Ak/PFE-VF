@@ -7,20 +7,25 @@ import {
   ActivityIndicator,
   ScrollView,
   Alert,
+  Switch,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { authStorage } from '../services/authStorage';
+import { userService } from '../services/userService';
+import { notificationService } from '../services/notificationService';
 
 export default function ProfileScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [registeringDevice, setRegisteringDevice] = useState(false);
 
   const loadUser = useCallback(async () => {
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('userToken');
-      const rawUser = await AsyncStorage.getItem('userData');
+      const token = await authStorage.getToken();
+      const rawUser = await authStorage.getUser();
 
       if (!token || !rawUser) {
         navigation.replace('Login', {
@@ -30,7 +35,12 @@ export default function ProfileScreen({ navigation }) {
         return;
       }
 
-      setUser(JSON.parse(rawUser));
+      setUser(rawUser);
+
+      const remoteUser = await userService.getCurrentUserProfile();
+      if (remoteUser) {
+        setUser(remoteUser);
+      }
     } catch (error) {
       Alert.alert('Erreur', 'Impossible de charger les donnees utilisateur.');
     } finally {
@@ -46,13 +56,82 @@ export default function ProfileScreen({ navigation }) {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.multiRemove(['userToken', 'userData']);
+      await notificationService.unregisterCurrentDevice();
+      await authStorage.clearSession();
       navigation.reset({
         index: 0,
         routes: [{ name: 'MainTabs', params: { screen: 'Home' } }],
       });
     } catch (error) {
       Alert.alert('Erreur', 'Impossible de se deconnecter pour le moment.');
+    }
+  };
+
+  const notificationSettings = {
+    enabled: user?.notificationSettings?.enabled !== false,
+    preMatch: user?.notificationSettings?.preMatch !== false,
+    matchStart: user?.notificationSettings?.matchStart !== false,
+    scoreChange: user?.notificationSettings?.scoreChange !== false,
+    matchEnd: user?.notificationSettings?.matchEnd !== false,
+  };
+
+  const handleToggleNotificationSetting = async (key, value) => {
+    const nextSettings = {
+      ...(user?.notificationSettings || {}),
+      [key]: value,
+    };
+
+    if (key === 'enabled' && value === false) {
+      nextSettings.preMatch = nextSettings.preMatch ?? true;
+      nextSettings.matchStart = nextSettings.matchStart ?? true;
+      nextSettings.scoreChange = nextSettings.scoreChange ?? true;
+      nextSettings.matchEnd = nextSettings.matchEnd ?? true;
+    }
+
+    setUser((previous) => ({
+      ...(previous || {}),
+      notificationSettings: nextSettings,
+    }));
+
+    try {
+      setSavingSettings(true);
+      const response = await userService.updateNotificationSettings(nextSettings);
+      if (response?.user) {
+        setUser(response.user);
+      }
+    } catch (error) {
+      Alert.alert('Erreur', error?.message || 'Impossible de mettre a jour les notifications.');
+      loadUser();
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleEnableDeviceNotifications = async () => {
+    try {
+      setRegisteringDevice(true);
+      const result = await notificationService.bootstrapForAuthenticatedUser({ forcePermissionPrompt: true });
+
+      if (!result?.ok) {
+        const reasonMap = {
+          web_not_supported: 'Les notifications push ne sont pas disponibles sur la version web actuelle.',
+          physical_device_required: 'Utilisez un appareil physique pour tester les notifications push.',
+          permission_denied: 'Autorisez les notifications dans le systeme pour les recevoir.',
+          project_id_missing: 'Ajoutez le projectId EAS Expo pour activer les notifications push distantes.',
+          token_unavailable: 'Le token de notification est indisponible pour le moment.',
+          backend_registration_failed: "Le token n'a pas pu etre enregistre sur le serveur.",
+        };
+
+        Alert.alert('Notifications', reasonMap[result?.reason] || 'Activation impossible pour le moment.');
+        return;
+      }
+
+      Alert.alert('Notifications', 'Cet appareil est maintenant enregistre pour les notifications.');
+      loadUser();
+    } catch (error) {
+      Alert.alert('Erreur', error?.message || "Impossible d'activer les notifications.");
+    } finally {
+      setRegisteringDevice(false);
     }
   };
 
@@ -95,6 +174,61 @@ export default function ProfileScreen({ navigation }) {
           <InfoRow label="Role" value={user?.role || 'supporter'} />
         </View>
 
+        <View style={styles.card}>
+          <View style={styles.sectionHeaderInline}>
+            <Text style={styles.sectionTitle}>Notifications</Text>
+            {savingSettings ? <ActivityIndicator size="small" color="#FF4D4D" /> : null}
+          </View>
+
+          <SettingsRow
+            label="Activer les notifications"
+            value={notificationSettings.enabled}
+            onValueChange={(value) => handleToggleNotificationSetting('enabled', value)}
+          />
+          <SettingsRow
+            label="Rappel avant match"
+            value={notificationSettings.preMatch}
+            onValueChange={(value) => handleToggleNotificationSetting('preMatch', value)}
+            disabled={!notificationSettings.enabled}
+          />
+          <SettingsRow
+            label="Debut du match"
+            value={notificationSettings.matchStart}
+            onValueChange={(value) => handleToggleNotificationSetting('matchStart', value)}
+            disabled={!notificationSettings.enabled}
+          />
+          <SettingsRow
+            label="Changement de score"
+            value={notificationSettings.scoreChange}
+            onValueChange={(value) => handleToggleNotificationSetting('scoreChange', value)}
+            disabled={!notificationSettings.enabled}
+          />
+          <SettingsRow
+            label="Fin du match"
+            value={notificationSettings.matchEnd}
+            onValueChange={(value) => handleToggleNotificationSetting('matchEnd', value)}
+            disabled={!notificationSettings.enabled}
+          />
+
+          <InfoRow label="Appareils enregistres" value={String(user?.pushTokenCount || 0)} />
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={handleEnableDeviceNotifications}
+            activeOpacity={0.9}
+            disabled={registeringDevice}
+          >
+            {registeringDevice ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="notifications-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.secondaryButtonText}>Activer sur cet appareil</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.9}>
           <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
           <Text style={styles.logoutText}>Se deconnecter</Text>
@@ -109,6 +243,21 @@ function InfoRow({ label, value }) {
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SettingsRow({ label, value, onValueChange, disabled = false }) {
+  return (
+    <View style={styles.infoRow}>
+      <Text style={[styles.infoLabel, disabled && styles.infoLabelDisabled]}>{label}</Text>
+      <Switch
+        value={Boolean(value)}
+        onValueChange={onValueChange}
+        disabled={disabled}
+        trackColor={{ false: '#243246', true: '#FF4D4D' }}
+        thumbColor="#FFFFFF"
+      />
     </View>
   );
 }
@@ -207,6 +356,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginBottom: 6,
   },
+  sectionHeaderInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -219,6 +374,9 @@ const styles = StyleSheet.create({
     color: '#7F8AA3',
     fontSize: 12,
     fontWeight: '800',
+  },
+  infoLabelDisabled: {
+    opacity: 0.6,
   },
   infoValue: {
     flex: 1,
@@ -240,6 +398,23 @@ const styles = StyleSheet.create({
   logoutText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontWeight: '900',
+  },
+  secondaryButton: {
+    marginTop: 16,
+    borderRadius: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#18253B',
+    borderWidth: 1,
+    borderColor: '#22324C',
+  },
+  secondaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '900',
   },
   loadingContainer: {

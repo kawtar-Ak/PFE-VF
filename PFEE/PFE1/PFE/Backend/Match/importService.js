@@ -4,12 +4,28 @@ const fetch = (...args) =>
 const Match = require("./MatchModel");
 const Team = require("./TeamModel");
 const League = require("./LeagueModel");
+const { notifyUsersForMatchUpdate } = require("../Notification/notificationService");
 
 const API_SPORTS_BASE_URL = "https://v3.football.api-sports.io";
 const API_SPORTS_KEY = process.env.APISPORTS_KEY;
 const IMPORT_TIMEZONE = process.env.MATCH_TIMEZONE || "Europe/Paris";
-const IMPORT_PAST_DAYS = Number(process.env.MATCH_IMPORT_PAST_DAYS || 1);
-const IMPORT_FUTURE_DAYS = Number(process.env.MATCH_IMPORT_FUTURE_DAYS || 3);
+
+const readNumberEnv = (name, fallback) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const sanitizeDayWindow = (value) => Math.max(0, Math.trunc(Number(value) || 0));
+
+const IMPORT_PAST_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_IMPORT_PAST_DAYS", 1));
+const IMPORT_FUTURE_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_IMPORT_FUTURE_DAYS", 3));
+const REFRESH_PAST_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_REFRESH_PAST_DAYS", 0));
+const REFRESH_FUTURE_DAYS = sanitizeDayWindow(readNumberEnv("MATCH_REFRESH_FUTURE_DAYS", IMPORT_FUTURE_DAYS));
 
 const LIVE_STATUSES = new Set(["1H", "2H", "HT", "ET", "P"]);
 const FINISHED_STATUSES = new Set(["FT", "AET", "PEN"]);
@@ -45,18 +61,34 @@ const getCurrentSeason = () => {
 
 const formatDate = (date) => date.toISOString().slice(0, 10);
 
-const getDateWindow = () => {
+const getDateWindow = (options = {}) => {
+  const pastDays = sanitizeDayWindow(options.pastDays ?? IMPORT_PAST_DAYS);
+  const futureDays = sanitizeDayWindow(options.futureDays ?? IMPORT_FUTURE_DAYS);
   const now = new Date();
   const from = new Date(now);
-  from.setUTCDate(from.getUTCDate() - IMPORT_PAST_DAYS);
+  from.setUTCDate(from.getUTCDate() - pastDays);
 
   const to = new Date(now);
-  to.setUTCDate(to.getUTCDate() + IMPORT_FUTURE_DAYS);
+  to.setUTCDate(to.getUTCDate() + futureDays);
 
   return {
     from: formatDate(from),
     to: formatDate(to)
   };
+};
+
+const getDateListFromWindow = (options = {}) => {
+  const { from, to } = getDateWindow(options);
+  const dates = [];
+  const cursor = new Date(`${from}T00:00:00.000Z`);
+  const limit = new Date(`${to}T00:00:00.000Z`);
+
+  while (cursor <= limit) {
+    dates.push(formatDate(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
 };
 
 const mapStatus = (shortStatus = "") => {
@@ -67,11 +99,16 @@ const mapStatus = (shortStatus = "") => {
 
 const requestApiSports = async (path, params = {}) => {
   if (!API_SPORTS_KEY) {
+    apiSportsLastError = { config: "API_SPORTS_KEY not configured" };
     console.warn("API_SPORTS_KEY not configured.");
     return [];
   }
 
   if (apiSportsBlockedUntil > Date.now()) {
+    apiSportsLastError = {
+      blocked: true,
+      blockedUntil: apiSportsBlockedUntil
+    };
     return [];
   }
 
@@ -87,6 +124,18 @@ const requestApiSports = async (path, params = {}) => {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      apiSportsLastError = {
+        httpStatus: response.status,
+        httpStatusText: response.statusText,
+        body: body.slice(0, 500)
+      };
+
+      if (response.status === 429) {
+        const now = new Date();
+        const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
+        apiSportsBlockedUntil = nextUtcMidnight;
+      }
+
       console.error(`API-Sports error ${response.status}: ${response.statusText} ${body}`);
       return [];
     }
@@ -107,6 +156,7 @@ const requestApiSports = async (path, params = {}) => {
       return [];
     }
 
+    apiSportsLastError = null;
     return Array.isArray(payload?.response) ? payload.response : [];
   } catch (error) {
     apiSportsLastError = { network: error.message };
@@ -115,12 +165,12 @@ const requestApiSports = async (path, params = {}) => {
   }
 };
 
-const fetchLeagueFixtures = async (leagueCode) => {
+const fetchLeagueFixtures = async (leagueCode, options = {}) => {
   const league = LEAGUES[leagueCode];
   if (!league) return [];
 
   const season = getCurrentSeason();
-  const { from, to } = getDateWindow();
+  const { from, to } = getDateWindow(options);
 
   return requestApiSports("/fixtures", {
     league: league.id,
@@ -129,6 +179,17 @@ const fetchLeagueFixtures = async (leagueCode) => {
     to,
     timezone: IMPORT_TIMEZONE
   });
+};
+
+const fetchFixturesByDate = async (date) => requestApiSports("/fixtures", {
+  date,
+  timezone: IMPORT_TIMEZONE
+});
+
+const fetchWindowFixtures = async (options = {}) => {
+  const dates = getDateListFromWindow(options);
+  const fixturesByDay = await Promise.all(dates.map((date) => fetchFixturesByDate(date)));
+  return fixturesByDay.flat();
 };
 
 const fetchLiveFixtures = async () => requestApiSports("/fixtures", {
@@ -308,6 +369,33 @@ const mergeFixtures = (fixtures, leagueCode, leagueName, bucket) => {
   });
 };
 
+const finalizeStaleLiveMatches = async (activeLiveFixtureIds = []) => {
+  const safeIds = activeLiveFixtureIds
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value));
+
+  const staleThreshold = new Date(Date.now() - (12 * 60 * 60 * 1000));
+  const query = {
+    status: "live",
+    date: { $lt: staleThreshold }
+  };
+
+  if (safeIds.length > 0) {
+    query.fixtureId = { $nin: safeIds };
+  }
+
+  const result = await Match.updateMany(query, {
+    $set: {
+      status: "finished",
+      statusShort: "FT",
+      minute: null,
+      updatedAt: new Date()
+    }
+  });
+
+  return result?.modifiedCount || 0;
+};
+
 const syncMatches = async (matches, io, options = {}) => {
   const emitUpdates = Boolean(options.emitUpdates);
   const includeLiveEvents = Boolean(options.includeLiveEvents);
@@ -437,6 +525,26 @@ const syncMatches = async (matches, io, options = {}) => {
       io.emit("match:update", saved);
       emitted += 1;
     }
+
+    try {
+      await notifyUsersForMatchUpdate({
+        previousMatch: existing,
+        currentMatch: {
+          fixtureId: incoming.fixtureId,
+          matchId: incoming.fixtureId,
+          apiMatchId: incoming.fixtureId,
+          status: payload.status,
+          statusShort: payload.statusShort,
+          date: payload.date,
+          homeScore: payload.homeScore,
+          awayScore: payload.awayScore,
+          homeTeam: incoming.homeTeam?.name,
+          awayTeam: incoming.awayTeam?.name,
+        }
+      });
+    } catch (notificationError) {
+      console.error("Favorite notification dispatch failed:", notificationError);
+    }
   }
 
   return { upserted, emitted };
@@ -464,15 +572,20 @@ const importLeagueMatches = async (leagueCode, io = null) => {
     const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
       emitUpdates: Boolean(io),
       includeLiveEvents: true,
-      includeFinishedDetails: true
+      includeFinishedDetails: false
     });
 
     return {
-      success: true,
-      message: `Upserted ${upserted} matches for ${league.name}`,
+      success: upserted > 0 || !apiSportsLastError,
+      message: upserted > 0
+        ? `Upserted ${upserted} matches for ${league.name}`
+        : (apiSportsLastError
+          ? `API-Sports did not return usable fixtures for ${league.name}`
+          : `No fixtures found for ${league.name} in the current window`),
       count: upserted,
       emitted,
-      league: league.name
+      league: league.name,
+      providerError: apiSportsLastError
     };
   } catch (error) {
     console.error("importLeagueMatches error:", error);
@@ -480,7 +593,7 @@ const importLeagueMatches = async (leagueCode, io = null) => {
   }
 };
 
-const importAllMatches = async (io = null) => {
+const importAllMatches = async (io = null, options = {}) => {
   if (importAllInProgress) {
     return { success: true, message: "Import already running", count: 0 };
   }
@@ -490,36 +603,41 @@ const importAllMatches = async (io = null) => {
       return { success: false, message: "API_SPORTS_KEY not configured", count: 0 };
     }
 
-    importAllInProgress = true;
-    const liveFixtures = await fetchLiveFixtures();
-    let total = 0;
-    let totalEmitted = 0;
-
-    for (const [leagueCode, league] of Object.entries(LEAGUES)) {
-      const fixtures = await fetchLeagueFixtures(leagueCode);
-      const relevantLiveFixtures = liveFixtures.filter((fixture) => fixture?.league?.id === league.id);
+      importAllInProgress = true;
+      apiSportsLastError = null;
+      const windowOptions = {
+        pastDays: options.pastDays ?? IMPORT_PAST_DAYS,
+        futureDays: options.futureDays ?? IMPORT_FUTURE_DAYS
+      };
+      const liveFixtures = await fetchLiveFixtures();
+      const scheduledFixtures = await fetchWindowFixtures(windowOptions);
       const bucket = new Map();
 
-      mergeFixtures(fixtures, leagueCode, league.name, bucket);
-      mergeFixtures(relevantLiveFixtures, leagueCode, league.name, bucket);
+    mergeFixtures(scheduledFixtures, null, null, bucket);
+    mergeFixtures(liveFixtures, null, null, bucket);
 
-      const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
-        emitUpdates: Boolean(io),
-        includeLiveEvents: false,
-        includeFinishedDetails: true
-      });
-      total += upserted;
-      totalEmitted += emitted;
-
-      console.log(`[scheduled-import] ${league.name}: upserted ${upserted}, emitted ${emitted}`);
-    }
+    const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
+      emitUpdates: Boolean(io),
+      includeLiveEvents: false,
+      includeFinishedDetails: false
+    });
+    const staleLiveFixed = await finalizeStaleLiveMatches(
+      liveFixtures.map((fixture) => fixture?.fixture?.id)
+    );
 
     return {
-      success: true,
-      message: `Upserted ${total} matches from API-Sports`,
-      count: total,
-      emitted: totalEmitted
-    };
+        success: upserted > 0 || staleLiveFixed > 0 || !apiSportsLastError,
+        message: upserted > 0
+          ? `Upserted ${upserted} matches from API-Sports`
+          : (apiSportsLastError
+            ? "API-Sports did not return usable fixtures for the current date window"
+            : "No fixtures found in the configured date window"),
+        count: upserted,
+        emitted,
+        staleLiveFixed,
+        window: getDateWindow(windowOptions),
+        providerError: apiSportsLastError
+      };
   } catch (error) {
     console.error("importAllMatches error:", error);
     return { success: false, message: error.message, count: 0 };
@@ -539,6 +657,7 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
     }
 
     livePollInProgress = true;
+    apiSportsLastError = null;
     const liveFixtures = await fetchLiveFixtures();
     const transformedMatches = liveFixtures
       .map((fixture) => {
@@ -556,13 +675,22 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
       includeLiveEvents: true,
       includeFinishedDetails: false
     });
+    const staleLiveFixed = await finalizeStaleLiveMatches(
+      liveFixtures.map((fixture) => fixture?.fixture?.id)
+    );
     console.log(`[live-poll] checked ${transformedMatches.length}, upserted ${upserted}, emitted ${emitted}`);
 
     return {
-      success: true,
-      message: "Live matches polled",
+      success: transformedMatches.length > 0 || staleLiveFixed > 0 || !apiSportsLastError,
+      message: transformedMatches.length > 0
+        ? "Live matches polled"
+        : (apiSportsLastError
+          ? "Live polling failed against API-Sports"
+          : "No live matches returned by provider"),
       count: upserted,
-      emitted
+      emitted,
+      staleLiveFixed,
+      providerError: apiSportsLastError
     };
   } catch (error) {
     console.error("pollLiveMatchesAndEmitUpdates error:", error);
@@ -579,7 +707,10 @@ const pollScheduledMatches = async (io) => {
 
   try {
     scheduledPollInProgress = true;
-    const result = await importAllMatches(io);
+    const result = await importAllMatches(io, {
+      pastDays: REFRESH_PAST_DAYS,
+      futureDays: REFRESH_FUTURE_DAYS
+    });
     console.log(`[scheduled-poll] upserted ${result.count || 0}, emitted ${result.emitted || 0}`);
     return result;
   } finally {
@@ -593,8 +724,10 @@ const getSupportedLeagues = () => Object.entries(LEAGUES).map(([code, league]) =
   name: league.name
 }));
 
-const serializeMatch = (matchDoc) => {
+const serializeMatch = (matchDoc, options = {}) => {
   if (!matchDoc) return null;
+
+  const includeDetails = Boolean(options.includeDetails);
 
   const homeTeam = matchDoc.homeTeamRef || {};
   const awayTeam = matchDoc.awayTeamRef || {};
@@ -630,9 +763,9 @@ const serializeMatch = (matchDoc) => {
     goals: matchDoc.goals || { home: null, away: null },
     homeScore: matchDoc.homeScore ?? matchDoc.goals?.home ?? null,
     awayScore: matchDoc.awayScore ?? matchDoc.goals?.away ?? null,
-    events: Array.isArray(matchDoc.events) ? matchDoc.events : [],
-    statistics: Array.isArray(matchDoc.statistics) ? matchDoc.statistics : [],
-    lineups: Array.isArray(matchDoc.lineups) ? matchDoc.lineups : [],
+    events: includeDetails && Array.isArray(matchDoc.events) ? matchDoc.events : [],
+    statistics: includeDetails && Array.isArray(matchDoc.statistics) ? matchDoc.statistics : [],
+    lineups: includeDetails && Array.isArray(matchDoc.lineups) ? matchDoc.lineups : [],
     updatedAt: matchDoc.updatedAt
   };
 };
@@ -652,7 +785,7 @@ const findStoredMatchById = async (fixtureId) => {
     .populate("leagueRef")
     .lean();
 
-  return serializeMatch(match);
+  return serializeMatch(match, { includeDetails: true });
 };
 
 const getMatchDetails = async (fixtureId) => {
@@ -854,7 +987,7 @@ const getLeagueStandings = async (leagueId, season = getCurrentSeason()) => {
   }));
 };
 
-const listMatches = async (query = {}) => {
+const listMatches = async (query = {}, options = {}) => {
   const matches = await Match.find(query)
     .populate("homeTeamRef")
     .populate("awayTeamRef")
@@ -862,7 +995,7 @@ const listMatches = async (query = {}) => {
     .sort({ date: 1 })
     .lean();
 
-  return matches.map(serializeMatch);
+  return matches.map((match) => serializeMatch(match, options));
 };
 
 const hydrateFinishedMatchesDetails = async (limit = 20) => {
@@ -934,6 +1067,8 @@ module.exports = {
     blockedUntil: apiSportsBlockedUntil || null,
     lastError: apiSportsLastError,
   }),
+  REFRESH_PAST_DAYS,
+  REFRESH_FUTURE_DAYS,
   LEAGUES,
   LIVE_STATUSES
 };

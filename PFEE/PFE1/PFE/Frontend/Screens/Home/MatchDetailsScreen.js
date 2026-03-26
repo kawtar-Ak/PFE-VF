@@ -114,6 +114,37 @@ const getCardLabel = (event) => {
   return 'Carton';
 };
 
+const getEventIconName = (event) => {
+  if (isCardEvent(event)) return 'square';
+  return EVENT_ICON_BY_TYPE[event?.type] || 'ellipse-outline';
+};
+
+const getEventIconPalette = (event) => {
+  if (isCardEvent(event)) {
+    const detail = String(event?.detail || '').toLowerCase();
+    if (detail.includes('red')) {
+      return {
+        iconColor: '#DC2626',
+        backgroundColor: '#FEE2E2',
+        borderColor: '#FECACA',
+      };
+    }
+    if (detail.includes('yellow')) {
+      return {
+        iconColor: '#EAB308',
+        backgroundColor: '#FEF9C3',
+        borderColor: '#FDE68A',
+      };
+    }
+  }
+
+  return {
+    iconColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#D7DEE8',
+  };
+};
+
 const getSummaryItemText = (event) => {
   const playerName = event?.player?.name || event?.playerName || 'Joueur';
   const teamName = event?.team?.name || event?.teamName || 'Equipe';
@@ -204,6 +235,38 @@ const buildFallbackSummaryItems = (match) => {
   items.push({ label: 'Match ID', value: String(match?.matchId || match?.apiMatchId || match?.fixtureId || match?._id || '-') });
 
   return items;
+};
+
+const fetchMatchBundle = async (matchId, forceImport = false) => {
+  if (!matchId) {
+    return {
+      matchData: null,
+      eventData: [],
+      statData: [],
+      lineupData: [],
+      providerStatus: { blocked: false, blockedUntil: null },
+    };
+  }
+
+  if (forceImport) {
+    await matchService.importMatchDetails(matchId);
+  }
+
+  const [matchData, eventData, statData, lineupData] = await Promise.all([
+    matchService.getMatchById(matchId),
+    matchService.getMatchEvents(matchId),
+    matchService.getMatchStatistics(matchId),
+    matchService.getMatchLineups(matchId),
+  ]);
+  const providerStatus = await matchService.getProviderStatus();
+
+  return {
+    matchData,
+    eventData,
+    statData,
+    lineupData,
+    providerStatus,
+  };
 };
 
 const buildPlayerRows = (lineups, events) => {
@@ -333,6 +396,43 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
   const matchId = initialMatch?.matchId || initialMatch?.apiMatchId || initialMatch?.fixtureId || initialMatch?.id || null;
 
+  const applyMatchBundle = ({ matchData, eventData, statData, lineupData, providerStatus }) => {
+    if (matchData) {
+      setMatch((previous) => ({
+        ...previous,
+        ...matchData,
+      }));
+
+      if (Array.isArray(matchData?.events) && matchData.events.length > 0) {
+        setEvents(matchData.events);
+      }
+      if (Array.isArray(matchData?.statistics) && matchData.statistics.length > 0) {
+        setStatistics(matchData.statistics);
+      }
+      if (Array.isArray(matchData?.lineups) && matchData.lineups.length > 0) {
+        setLineups(matchData.lineups);
+      }
+    }
+
+    setEvents((previous) => {
+      const next = Array.isArray(eventData) ? eventData : [];
+      return next.length > 0 ? next : previous;
+    });
+
+    setStatistics((previous) => {
+      const next = Array.isArray(statData) ? statData : [];
+      return next.length > 0 ? next : previous;
+    });
+
+    setLineups((previous) => {
+      const next = Array.isArray(lineupData) ? lineupData : [];
+      return next.length > 0 ? next : previous;
+    });
+
+    setProviderBlocked(Boolean(providerStatus?.blocked));
+    setProviderBlockedUntil(providerStatus?.blockedUntil || null);
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -344,51 +444,10 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
       try {
         setLoading(true);
-
-        const [matchData, eventData, statData, lineupData] = await Promise.all([
-          matchService.getMatchById(matchId),
-          matchService.getMatchEvents(matchId),
-          matchService.getMatchStatistics(matchId),
-          matchService.getMatchLineups(matchId),
-        ]);
-        const providerStatus = await matchService.getProviderStatus();
+        const bundle = await fetchMatchBundle(matchId);
 
         if (!mounted) return;
-
-        if (matchData) {
-          setMatch((previous) => ({
-            ...previous,
-            ...matchData,
-          }));
-
-          if (Array.isArray(matchData?.events) && matchData.events.length > 0) {
-            setEvents(matchData.events);
-          }
-          if (Array.isArray(matchData?.statistics) && matchData.statistics.length > 0) {
-            setStatistics(matchData.statistics);
-          }
-          if (Array.isArray(matchData?.lineups) && matchData.lineups.length > 0) {
-            setLineups(matchData.lineups);
-          }
-        }
-
-        setEvents((previous) => {
-          const next = Array.isArray(eventData) ? eventData : [];
-          return next.length > 0 ? next : previous;
-        });
-
-        setStatistics((previous) => {
-          const next = Array.isArray(statData) ? statData : [];
-          return next.length > 0 ? next : previous;
-        });
-
-        setLineups((previous) => {
-          const next = Array.isArray(lineupData) ? lineupData : [];
-          return next.length > 0 ? next : previous;
-        });
-
-        setProviderBlocked(Boolean(providerStatus?.blocked));
-        setProviderBlockedUntil(providerStatus?.blockedUntil || null);
+        applyMatchBundle(bundle);
       } catch (error) {
         console.error('Erreur details match:', error);
       } finally {
@@ -478,7 +537,6 @@ export default function MatchDetailsScreen({ route, navigation }) {
   const providerBlockedMessage = providerBlocked
     ? `API-Sports limite atteinte. Reessayez apres ${providerBlockedUntil ? new Date(providerBlockedUntil).toLocaleString('fr-FR') : 'reset quota'}.`
     : null;
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -515,7 +573,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
               <LeagueLogo source={match} size={18} style={styles.competitionLogo} />
               <Text style={styles.competitionText} numberOfLines={1}>{competitionLabel}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#475569" />
+            <Ionicons name="chevron-forward" size={18} color="#DBEAFE" />
           </View>
 
           <View style={styles.scorePanel}>
@@ -598,22 +656,33 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
                   {timelineEvents
                     .filter((event) => !isGoalEvent(event) && !isCardEvent(event) && !isSubEvent(event))
-                    .map((event, index) => (
-                      <View key={event?.id || `${event?.type}-${index}`} style={styles.timelineRow}>
-                        <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
-                        <View style={styles.timelineIconWrap}>
-                          <Ionicons
-                            name={EVENT_ICON_BY_TYPE[event?.type] || 'ellipse-outline'}
-                            size={16}
-                            color="#0F172A"
-                          />
+                    .map((event, index) => {
+                      const iconPalette = getEventIconPalette(event);
+                      return (
+                        <View key={event?.id || `${event?.type}-${index}`} style={styles.timelineRow}>
+                          <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
+                          <View
+                            style={[
+                              styles.timelineIconWrap,
+                              {
+                                backgroundColor: iconPalette.backgroundColor,
+                                borderColor: iconPalette.borderColor,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name={getEventIconName(event)}
+                              size={16}
+                              color={iconPalette.iconColor}
+                            />
+                          </View>
+                          <View style={styles.timelineBody}>
+                            <Text style={styles.timelineTitle}>{getEventTitle(event)}</Text>
+                            <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
+                          </View>
                         </View>
-                        <View style={styles.timelineBody}>
-                          <Text style={styles.timelineTitle}>{getEventTitle(event)}</Text>
-                          <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
-                        </View>
-                      </View>
-                    ))}
+                      );
+                    })}
                 </View>
               )}
             </View>
@@ -763,30 +832,41 @@ function SummaryEventGroup({ title, icon, events }) {
       {!events?.length ? (
         <Text style={styles.summaryGroupEmpty}>Aucun</Text>
       ) : (
-        events.map((event, index) => (
-          <View key={event?.id || `${title}-${index}`} style={styles.timelineRow}>
-            <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
-            <View style={styles.timelineIconWrap}>
-              <Ionicons
-                name={EVENT_ICON_BY_TYPE[event?.type] || 'ellipse-outline'}
-                size={16}
-                color="#0F172A"
-              />
+        events.map((event, index) => {
+          const iconPalette = getEventIconPalette(event);
+          return (
+            <View key={event?.id || `${title}-${index}`} style={styles.timelineRow}>
+              <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
+              <View
+                style={[
+                  styles.timelineIconWrap,
+                  {
+                    backgroundColor: iconPalette.backgroundColor,
+                    borderColor: iconPalette.borderColor,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={getEventIconName(event)}
+                  size={16}
+                  color={iconPalette.iconColor}
+                />
+              </View>
+              <View style={styles.timelineBody}>
+                <Text style={styles.timelineTitle}>{getSummaryItemText(event)}</Text>
+                {isGoalEvent(event) && event?.assist?.name ? (
+                  <Text style={styles.timelineSubtitle}>Assist: {event.assist.name}</Text>
+                ) : null}
+                {isGoalEvent(event) && event?.scoreLabel ? (
+                  <Text style={styles.timelineSubtitle}>Score: {event.scoreLabel}</Text>
+                ) : null}
+                {isSubEvent(event) ? (
+                  <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
+                ) : null}
+              </View>
             </View>
-            <View style={styles.timelineBody}>
-              <Text style={styles.timelineTitle}>{getSummaryItemText(event)}</Text>
-              {isGoalEvent(event) && event?.assist?.name ? (
-                <Text style={styles.timelineSubtitle}>Assist: {event.assist.name}</Text>
-              ) : null}
-              {isGoalEvent(event) && event?.scoreLabel ? (
-                <Text style={styles.timelineSubtitle}>Score: {event.scoreLabel}</Text>
-              ) : null}
-              {isSubEvent(event) ? (
-                <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
-              ) : null}
-            </View>
-          </View>
-        ))
+          );
+        })
       )}
     </View>
   );
@@ -840,10 +920,10 @@ const styles = StyleSheet.create({
   competitionBar: {
     marginTop: 10,
     marginHorizontal: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1D4ED8',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#D7DEE8',
+    borderColor: '#1E40AF',
     paddingHorizontal: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -857,12 +937,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   competitionLogo: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#DBEAFE',
     borderWidth: 0,
   },
   competitionText: {
     flex: 1,
-    color: '#334155',
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
     textTransform: 'uppercase',

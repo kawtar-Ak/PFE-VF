@@ -10,7 +10,9 @@ const newsRoutes = require("./News/newsRoute");
 const {
   importAllMatches,
   pollLiveMatchesAndEmitUpdates,
-  pollScheduledMatches
+  pollScheduledMatches,
+  REFRESH_PAST_DAYS,
+  REFRESH_FUTURE_DAYS
 } = require("./Match/importService.js");
 const { initSocket } = require("./socket.js");
 
@@ -30,6 +32,23 @@ const ALLOWED_ORIGINS = String(process.env.CORS_ORIGINS || "http://localhost:808
   .filter(Boolean);
 
 const io = initSocket(server);
+
+const isExistingKicklyServerRunning = async (port) => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(2000)
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = await response.json().catch(() => null);
+    return payload?.status === "Server is running";
+  } catch (error) {
+    return false;
+  }
+};
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -59,35 +78,6 @@ const globalLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-mongoose
-  .connect(MONGO_URI)
-  .then(() => {
-    console.log("MongoDB connected to", MONGO_URI);
-    console.log("Live poll interval (ms):", LIVE_POLL_INTERVAL_MS);
-    console.log("Scheduled import interval (ms):", SCHEDULED_POLL_INTERVAL_MS);
-    console.log("Importing matches from API-Sports...");
-
-    importAllMatches(io).catch((error) => {
-      console.error("Initial match import failed:", error);
-    });
-
-    setInterval(() => {
-      pollLiveMatchesAndEmitUpdates(io).catch((error) => {
-        console.error("Live polling failed:", error);
-      });
-    }, LIVE_POLL_INTERVAL_MS);
-
-    setInterval(() => {
-      pollScheduledMatches(io).catch((error) => {
-        console.error("Scheduled polling failed:", error);
-      });
-    }, SCHEDULED_POLL_INTERVAL_MS);
-  })
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-    process.exit(1);
-  });
-
 app.use("/api/user", userRoutes);
 app.use("/api/match", matchRoutes);
 app.use("/api/matches", matchRoutes);
@@ -106,6 +96,65 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal server error", message: err.message });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use by another process.`);
+    process.exit(1);
+    return;
+  }
+
+  console.error("Server error:", error);
+  process.exit(1);
+});
+
+const startServer = async () => {
+  if (await isExistingKicklyServerRunning(PORT)) {
+    console.log(`Backend already running on port ${PORT}.`);
+    return;
+  }
+
+  server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+
+    mongoose
+      .connect(MONGO_URI)
+      .then(() => {
+        console.log("MongoDB connected to", MONGO_URI);
+        console.log("Live poll interval (ms):", LIVE_POLL_INTERVAL_MS);
+        console.log("Scheduled import interval (ms):", SCHEDULED_POLL_INTERVAL_MS);
+        console.log("Refreshing current and upcoming matches from API-Sports...");
+        console.log("Refresh window (days):", {
+          past: REFRESH_PAST_DAYS,
+          future: REFRESH_FUTURE_DAYS
+        });
+
+        importAllMatches(io, {
+          pastDays: REFRESH_PAST_DAYS,
+          futureDays: REFRESH_FUTURE_DAYS
+        }).catch((error) => {
+          console.error("Initial match import failed:", error);
+        });
+
+        setInterval(() => {
+          pollLiveMatchesAndEmitUpdates(io).catch((error) => {
+            console.error("Live polling failed:", error);
+          });
+        }, LIVE_POLL_INTERVAL_MS);
+
+        setInterval(() => {
+          pollScheduledMatches(io).catch((error) => {
+            console.error("Scheduled polling failed:", error);
+          });
+        }, SCHEDULED_POLL_INTERVAL_MS);
+      })
+      .catch((err) => {
+        console.error("MongoDB connection error:", err);
+        process.exit(1);
+      });
+  });
+};
+
+startServer().catch((error) => {
+  console.error("Startup error:", error);
+  process.exit(1);
 });

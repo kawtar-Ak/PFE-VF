@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "powershell -ExecutionPolicy Bypass -File ./scripts/start-backend.ps1",
+    "start:raw": "node server.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

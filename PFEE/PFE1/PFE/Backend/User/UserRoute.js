@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const AuthenticatedUser = require("../User/UserModel");
+const { requireAuth } = require("./authMiddleware");
 
 const router = express.Router();
 
@@ -33,8 +34,56 @@ const authLimiter = rateLimit({
 
 const normalizeEmail = (value = "") => value.trim().toLowerCase();
 const normalizeUsername = (value = "") => value.trim();
+const normalizePushToken = (value = "") => String(value || "").trim();
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  enabled: true,
+  preMatch: true,
+  matchStart: true,
+  scoreChange: true,
+  matchEnd: true,
+  reminderMinutesBefore: 30
+};
 
 const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const sanitizeNotificationSettings = (value = {}) => {
+  const source = value && typeof value === "object" ? value : {};
+
+  return {
+    enabled: source.enabled !== false,
+    preMatch: source.preMatch !== false,
+    matchStart: source.matchStart !== false,
+    scoreChange: source.scoreChange !== false,
+    matchEnd: source.matchEnd !== false,
+    reminderMinutesBefore: Math.max(
+      5,
+      Math.min(120, Number(source.reminderMinutesBefore) || DEFAULT_NOTIFICATION_SETTINGS.reminderMinutesBefore)
+    )
+  };
+};
+
+const buildFavoriteFixtureIds = (user) => (
+  Array.isArray(user?.favoriteMatches)
+    ? user.favoriteMatches
+        .map((entry) => entry?.fixtureId)
+        .filter((fixtureId) => Number.isInteger(fixtureId))
+    : []
+);
+
+const sanitizeUserPayload = (user) => ({
+  id: user._id,
+  _id: user._id,
+  email: user.email,
+  username: user.username,
+  picture: user.picture || null,
+  isGoogleUser: Boolean(user.isGoogleUser),
+  accountStatus: user.accountStatus || "ACTIVE",
+  notificationSettings: sanitizeNotificationSettings(user.notificationSettings),
+  favoriteMatchIds: buildFavoriteFixtureIds(user),
+  pushTokenCount: Array.isArray(user?.pushTokens)
+    ? user.pushTokens.filter((entry) => entry?.active).length
+    : 0
+});
 
 const getPasswordAnalysis = (password = "") => {
   const criteria = {
@@ -274,11 +323,7 @@ router.post("/register", authLimiter, async (req, res) => {
 
     return res.status(201).json({
       message: "Utilisateur cree avec succes.",
-      user: {
-        id: newUser._id,
-        email: newUser.email,
-        username: newUser.username
-      },
+      user: sanitizeUserPayload(newUser),
       token,
       strength: passwordAnalysis.strength,
       missing: []
@@ -368,12 +413,7 @@ router.post("/login", authLimiter, async (req, res) => {
     return res.status(200).json({
       message: "Connexion reussie.",
       token,
-      user: {
-        id: user._id,
-        email: user.email,
-        username: user.username,
-        accountStatus: user.accountStatus || "ACTIVE"
-      }
+      user: sanitizeUserPayload(user)
     });
   } catch (err) {
     console.error("Erreur login:", err);
@@ -443,14 +483,7 @@ router.post("/google-login", async (req, res) => {
     return res.status(200).json({
       message: "Connexion via Google reussie.",
       token,
-      user: {
-        id: user._id,
-        email: user.email,
-        username: user.username,
-        picture: user.picture,
-        isGoogleUser: user.isGoogleUser,
-        accountStatus: user.accountStatus || "ACTIVE"
-      }
+      user: sanitizeUserPayload(user)
     });
   } catch (error) {
     console.error("Google login error:", error);
@@ -460,6 +493,185 @@ router.post("/google-login", async (req, res) => {
         global: "Erreur interne."
       }
     }));
+  }
+});
+
+router.get("/me", requireAuth, async (req, res) => {
+  return res.status(200).json({
+    user: sanitizeUserPayload(req.auth.user)
+  });
+});
+
+router.put("/me/notifications", requireAuth, async (req, res) => {
+  try {
+    const nextSettings = sanitizeNotificationSettings({
+      ...sanitizeNotificationSettings(req.auth.user.notificationSettings),
+      ...(req.body || {})
+    });
+
+    req.auth.user.notificationSettings = nextSettings;
+    await req.auth.user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      message: "Preferences de notification mises a jour.",
+      notificationSettings: nextSettings,
+      user: sanitizeUserPayload(req.auth.user)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible de mettre a jour les notifications." });
+  }
+});
+
+router.post("/me/device-token", requireAuth, async (req, res) => {
+  try {
+    const token = normalizePushToken(req.body?.token);
+    const platform = String(req.body?.platform || "").trim() || null;
+    const deviceName = String(req.body?.deviceName || "").trim() || null;
+
+    if (!token) {
+      return res.status(400).json({ error: "Token appareil requis." });
+    }
+
+    const currentTokens = Array.isArray(req.auth.user.pushTokens) ? [...req.auth.user.pushTokens] : [];
+    const existingIndex = currentTokens.findIndex((entry) => normalizePushToken(entry?.token) === token);
+    const nextEntry = {
+      token,
+      platform,
+      deviceName,
+      lastSeenAt: new Date(),
+      active: true
+    };
+
+    if (existingIndex >= 0) {
+      currentTokens[existingIndex] = {
+        ...currentTokens[existingIndex].toObject?.(),
+        ...currentTokens[existingIndex],
+        ...nextEntry
+      };
+    } else {
+      currentTokens.push(nextEntry);
+    }
+
+    req.auth.user.pushTokens = currentTokens;
+    await req.auth.user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      message: "Token appareil enregistre.",
+      pushTokenCount: currentTokens.filter((entry) => entry?.active).length
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible d'enregistrer le token." });
+  }
+});
+
+router.delete("/me/device-token", requireAuth, async (req, res) => {
+  try {
+    const token = normalizePushToken(req.body?.token);
+    if (!token) {
+      return res.status(400).json({ error: "Token appareil requis." });
+    }
+
+    req.auth.user.pushTokens = (Array.isArray(req.auth.user.pushTokens) ? req.auth.user.pushTokens : [])
+      .map((entry) => ({
+        ...entry.toObject?.(),
+        ...entry,
+        active: normalizePushToken(entry?.token) === token ? false : Boolean(entry?.active),
+      }));
+
+    await req.auth.user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({ message: "Token appareil desactive." });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible de desactiver le token." });
+  }
+});
+
+router.get("/me/favorites", requireAuth, async (req, res) => {
+  return res.status(200).json({
+    favoriteMatchIds: buildFavoriteFixtureIds(req.auth.user)
+  });
+});
+
+router.post("/me/favorites", requireAuth, async (req, res) => {
+  try {
+    const fixtureId = Number(req.body?.fixtureId);
+    if (!Number.isInteger(fixtureId)) {
+      return res.status(400).json({ error: "fixtureId invalide." });
+    }
+
+    const favorites = Array.isArray(req.auth.user.favoriteMatches) ? [...req.auth.user.favoriteMatches] : [];
+    const exists = favorites.some((entry) => entry?.fixtureId === fixtureId);
+
+    if (!exists) {
+      favorites.push({
+        fixtureId,
+        addedAt: new Date(),
+        notifications: {}
+      });
+      req.auth.user.favoriteMatches = favorites;
+      await req.auth.user.save({ validateBeforeSave: false });
+    }
+
+    return res.status(200).json({
+      favoriteMatchIds: buildFavoriteFixtureIds(req.auth.user)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible d'ajouter le favori." });
+  }
+});
+
+router.delete("/me/favorites/:fixtureId", requireAuth, async (req, res) => {
+  try {
+    const fixtureId = Number(req.params?.fixtureId);
+    if (!Number.isInteger(fixtureId)) {
+      return res.status(400).json({ error: "fixtureId invalide." });
+    }
+
+    req.auth.user.favoriteMatches = (Array.isArray(req.auth.user.favoriteMatches) ? req.auth.user.favoriteMatches : [])
+      .filter((entry) => entry?.fixtureId !== fixtureId);
+
+    await req.auth.user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      favoriteMatchIds: buildFavoriteFixtureIds(req.auth.user)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible de supprimer le favori." });
+  }
+});
+
+router.put("/me/favorites/sync", requireAuth, async (req, res) => {
+  try {
+    const fixtureIds = Array.isArray(req.body?.fixtureIds)
+      ? [...new Set(
+          req.body.fixtureIds
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value))
+        )]
+      : [];
+
+    const previousById = new Map(
+      (Array.isArray(req.auth.user.favoriteMatches) ? req.auth.user.favoriteMatches : [])
+        .filter((entry) => Number.isInteger(entry?.fixtureId))
+        .map((entry) => [entry.fixtureId, entry])
+    );
+
+    req.auth.user.favoriteMatches = fixtureIds.map((fixtureId) => {
+      const existing = previousById.get(fixtureId);
+      return existing || {
+        fixtureId,
+        addedAt: new Date(),
+        notifications: {}
+      };
+    });
+
+    await req.auth.user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      favoriteMatchIds: buildFavoriteFixtureIds(req.auth.user)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Impossible de synchroniser les favoris." });
   }
 });
 

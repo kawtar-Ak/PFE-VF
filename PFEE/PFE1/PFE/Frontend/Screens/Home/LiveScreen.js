@@ -158,7 +158,7 @@ export default function LiveScreen({ navigation }) {
         <Ionicons
           name="chevron-forward"
           size={20}
-          color={LIVE_ACCENT}
+          color="#10243e"
         />
         <LeagueLogo source={leagueMeta} size={18} style={styles.leagueHeaderLogo} />
         <Text style={styles.leagueTitle} numberOfLines={1}>{title}</Text>

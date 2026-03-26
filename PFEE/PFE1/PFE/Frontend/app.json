@@ -17,6 +17,7 @@
     },
     "web": {},
     "plugins": [
+      "expo-notifications",
       [
         "expo-splash-screen",
         {

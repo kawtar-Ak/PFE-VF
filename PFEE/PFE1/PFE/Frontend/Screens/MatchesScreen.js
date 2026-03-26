@@ -240,10 +240,14 @@ const styles = StyleSheet.create({
   leagueWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6
+    gap: 6,
+    backgroundColor: '#1D4ED8',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999
   },
   leagueLogo: {
-    backgroundColor: '#1E293B',
+    backgroundColor: '#DBEAFE',
     borderWidth: 0
   },
   matchContent: {
