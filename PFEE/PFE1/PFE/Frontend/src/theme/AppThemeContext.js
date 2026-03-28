@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { APP_THEME_COLORS } from './colors';
+import { getFootballPalette } from './footballDark';
 
 const STORAGE_KEY = 'kickly_theme_mode';
 const AppThemeContext = createContext(null);
@@ -61,6 +62,7 @@ export function AppThemeProvider({ children }) {
     mode,
     isDark: mode === 'dark',
     isLight: mode === 'light',
+    palette: getFootballPalette(mode),
     navigationTheme: buildNavigationTheme(mode),
     toggleTheme,
   }), [mode, toggleTheme]);

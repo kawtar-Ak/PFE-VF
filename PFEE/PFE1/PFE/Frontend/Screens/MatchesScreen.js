@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,9 +12,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import LeagueLogo from '../components/LeagueLogo';
 import { matchService } from '../services/matchService';
-import { BRAND_COLORS } from '../src/theme/colors';
+import { useAppTheme } from '../src/theme/AppThemeContext';
 
 export default function MatchesScreen() {
+  const { palette: C } = useAppTheme();
+  const styles = useMemo(() => createStyles(C), [C]);
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,10 +64,10 @@ export default function MatchesScreen() {
 
   const getStatusColor = (status) => {
     switch(status) {
-      case 'live': return BRAND_COLORS.accent;
-      case 'finished': return BRAND_COLORS.second;
-      case 'scheduled': return '#94a3b8';
-      default: return '#94a3b8';
+      case 'live': return C.live;
+      case 'finished': return C.success;
+      case 'scheduled': return C.muted;
+      default: return C.muted;
     }
   };
 
@@ -121,17 +123,19 @@ export default function MatchesScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Ionicons name="football-outline" size={24} color={BRAND_COLORS.first} />
+          <Ionicons name="football-outline" size={24} color={C.accent} />
+          
           <Text style={styles.headerTitle}>Matches</Text>
         </View>
         <TouchableOpacity onPress={loadMatches}>
-          <Ionicons name="refresh" size={24} color={BRAND_COLORS.first} />
+          <Ionicons name="refresh" size={24} color={C.text} />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={BRAND_COLORS.second} />
+          <ActivityIndicator size="large" color={C.accent} />
+          
           <Text style={styles.loadingText}>Chargement des matches...</Text>
         </View>
       ) : matches.length === 0 ? (
@@ -139,7 +143,7 @@ export default function MatchesScreen() {
           <Ionicons
             name={matchesError ? 'cloud-offline-outline' : 'alert-circle-outline'}
             size={48}
-            color={matchesError ? '#ef4444' : '#94a3b8'}
+            color={matchesError ? C.live : C.muted}
           />
           <Text style={styles.emptyText}>
             {matchesError ? 'Backend indisponible' : 'Aucun match disponible'}
@@ -163,10 +167,10 @@ export default function MatchesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BRAND_COLORS.third
+    backgroundColor: C.bg
   },
   header: {
     flexDirection: 'row',
@@ -175,14 +179,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: BRAND_COLORS.fourth
+    borderBottomColor: C.border
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center'
   },
   headerTitle: {
-    color: BRAND_COLORS.first,
+    color: C.text,
     fontSize: 22,
     fontWeight: 'bold',
     marginLeft: 8
@@ -194,18 +198,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16
   },
   loadingText: {
-    color: '#94a3b8',
+    color: C.muted,
     marginTop: 12,
     fontSize: 14
   },
   emptyText: {
-    color: BRAND_COLORS.first,
+    color: C.text,
     fontSize: 18,
     fontWeight: '600',
     marginTop: 16
   },
   emptySubtext: {
-    color: '#94a3b8',
+    color: C.muted,
     fontSize: 14,
     marginTop: 8
   },
@@ -213,12 +217,12 @@ const styles = StyleSheet.create({
     padding: 12
   },
   matchCard: {
-    backgroundColor: BRAND_COLORS.fourth,
-    borderRadius: 12,
+    backgroundColor: C.panel,
+    borderRadius: 22,
     marginBottom: 12,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#4a6177'
+    borderColor: C.border
   },
   statusBar: {
     flexDirection: 'row',
@@ -228,12 +232,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8
   },
   statusLabel: {
-    color: '#fff',
+    color: C.white,
     fontSize: 12,
     fontWeight: 'bold'
   },
   leagueName: {
-    color: '#fff',
+    color: C.white,
     fontSize: 11,
     fontWeight: '600'
   },
@@ -241,13 +245,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#1D4ED8',
+    backgroundColor: C.panelAlt,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999
   },
   leagueLogo: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: C.accent,
     borderWidth: 0
   },
   matchContent: {
@@ -261,12 +265,12 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   date: {
-    color: '#94a3b8',
+    color: C.muted,
     fontSize: 11,
     fontWeight: '600'
   },
   time: {
-    color: BRAND_COLORS.second,
+    color: C.accent,
     fontSize: 10,
     marginTop: 2
   },
@@ -276,7 +280,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 8
   },
   teamName: {
-    color: BRAND_COLORS.first,
+    color: C.text,
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center'
@@ -286,12 +290,12 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   score: {
-    color: BRAND_COLORS.first,
+    color: C.text,
     fontSize: 16,
     fontWeight: 'bold'
   },
   timeDisplay: {
-    color: BRAND_COLORS.second,
+    color: C.accent,
     fontSize: 12,
     fontWeight: '600'
   }

@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Animated, Easing, Image, StyleSheet, TouchableOpacity, View } from "react-native";
-import { Ionicons } from '@expo/vector-icons';
+import { Animated, Easing, Image, StyleSheet, View } from "react-native";
 
 import LoginScreen from "../Screens/LoginScreen";
 import RegisterScreen from "../Screens/RegisterScreen";
@@ -17,6 +16,8 @@ import { notificationService } from '../services/notificationService';
 const Stack = createNativeStackNavigator();
 
 function KicklySplash() {
+  const { palette: C } = useAppTheme();
+  const styles = useMemo(() => createStyles(C), [C]);
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.9)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
@@ -57,6 +58,7 @@ function KicklySplash() {
     <View style={styles.splashRoot}>
       <View style={styles.splashTop} />
       <View style={styles.splashBottom} />
+      <View style={styles.splashGlow} />
 
       <View style={styles.brandWrap}>
         <Animated.View style={{ opacity: logoOpacity, transform: [{ scale: logoScale }] }}>
@@ -80,7 +82,8 @@ function KicklySplash() {
 
 function AppRoot() {
   const [showSplash, setShowSplash] = useState(true);
-  const { navigationTheme, toggleTheme, isDark } = useAppTheme();
+  const { navigationTheme, palette: C } = useAppTheme();
+  const styles = useMemo(() => createStyles(C), [C]);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 3000);
@@ -127,10 +130,6 @@ function AppRoot() {
           <Stack.Screen name="Profile" component={ProfileScreen} />
         </Stack.Navigator>
       </NavigationContainer>
-
-      <TouchableOpacity style={styles.themeToggle} onPress={toggleTheme} activeOpacity={0.88}>
-        <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={18} color="#FFFFFF" />
-      </TouchableOpacity>
     </View>
   );
 }
@@ -143,10 +142,10 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C) => StyleSheet.create({
   splashRoot: {
     flex: 1,
-    backgroundColor: "#061f2f",
+    backgroundColor: C.bg,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -156,50 +155,50 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 250,
-    backgroundColor: "#ff0a5b",
-    borderBottomRightRadius: 170,
+    height: 220,
+    backgroundColor: C.panelAlt,
+    borderBottomRightRadius: 150,
+    borderBottomLeftRadius: 40,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   splashBottom: {
     position: "absolute",
     bottom: 0,
     right: 0,
-    width: "72%",
-    height: 250,
-    backgroundColor: "#ff0a5b",
+    width: "76%",
+    height: 240,
+    backgroundColor: C.accent,
     borderTopLeftRadius: 170,
+    borderTopRightRadius: 36,
+  },
+  splashGlow: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: "rgba(200, 255, 54, 0.10)",
   },
   brandWrap: {
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 24,
   },
   splashLogo: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     marginBottom: 20,
+    borderWidth: 3,
+    borderColor: C.panel,
   },
   splashTitle: {
-    color: "#f8fafc",
-    fontSize: 40,
+    color: C.text,
+    fontSize: 38,
     fontWeight: "900",
-    letterSpacing: 1.2,
+    letterSpacing: 1,
   },
   appRoot: {
     flex: 1,
-  },
-  themeToggle: {
-    position: 'absolute',
-    right: 14,
-    top: 46,
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FF4D4D',
-    borderWidth: 1,
-    borderColor: '#D93636',
-    zIndex: 999,
   },
 });

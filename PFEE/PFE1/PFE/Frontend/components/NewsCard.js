@@ -1,7 +1,7 @@
 import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BRAND_COLORS } from '../src/theme/colors';
+import { useAppTheme } from '../src/theme/AppThemeContext';
 
 const formatDate = (value) => {
   if (!value) return 'Date inconnue';
@@ -16,8 +16,9 @@ const formatDate = (value) => {
   });
 };
 
-export default function NewsCard({ item, onPress, isLight }) {
-  const styles = createStyles(isLight);
+export default function NewsCard({ item, onPress }) {
+  const { palette } = useAppTheme();
+  const styles = createStyles(palette);
   const hasImage = Boolean(item?.image);
 
   return (
@@ -32,7 +33,7 @@ export default function NewsCard({ item, onPress, isLight }) {
         <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
       ) : (
         <View style={styles.imageFallback}>
-          <Ionicons name="newspaper-outline" size={28} color={isLight ? '#64748B' : '#7C8CA6'} />
+          <Ionicons name="newspaper-outline" size={28} color={palette.muted} />
         </View>
       )}
 
@@ -51,32 +52,32 @@ export default function NewsCard({ item, onPress, isLight }) {
 
         <View style={styles.readRow}>
           <Text style={styles.readText}>Lire l&apos;article</Text>
-          <Ionicons name="open-outline" size={15} color={isLight ? '#1D4ED8' : '#60A5FA'} />
+          <Ionicons name="open-outline" size={15} color={palette.accentDark} />
         </View>
       </View>
     </TouchableOpacity>
   );
 }
 
-const createStyles = (isLight) =>
+const createStyles = (C) =>
   StyleSheet.create({
     card: {
-      backgroundColor: isLight ? '#FFFFFF' : BRAND_COLORS.fourth,
-      borderColor: isLight ? '#D8E2EF' : '#425a72',
+      backgroundColor: C.panel,
+      borderColor: C.border,
       borderWidth: 1,
-      borderRadius: 16,
-      marginBottom: 12,
+      borderRadius: 22,
+      marginBottom: 14,
       overflow: 'hidden',
     },
     image: {
       width: '100%',
-      height: 130,
-      backgroundColor: isLight ? '#E9F0FA' : '#111C2D',
+      height: 160,
+      backgroundColor: C.panelAlt,
     },
     imageFallback: {
       width: '100%',
-      height: 90,
-      backgroundColor: isLight ? '#EAF1FB' : '#111C2D',
+      height: 100,
+      backgroundColor: C.panelAlt,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -86,8 +87,8 @@ const createStyles = (isLight) =>
       gap: 6,
     },
     title: {
-      color: isLight ? '#0F172A' : '#E6EDF8',
-      fontSize: 15,
+      color: C.text,
+      fontSize: 16,
       lineHeight: 20,
       fontWeight: '900',
     },
@@ -97,23 +98,23 @@ const createStyles = (isLight) =>
       gap: 6,
     },
     source: {
-      color: BRAND_COLORS.accent,
+      color: C.accent,
       fontSize: 12,
       fontWeight: '900',
       textTransform: 'uppercase',
     },
     dot: {
-      color: isLight ? '#94A3B8' : '#6B7E99',
+      color: C.muted,
       fontSize: 12,
       fontWeight: '800',
     },
     date: {
-      color: isLight ? '#55657C' : '#95A6C0',
+      color: C.muted,
       fontSize: 12,
       fontWeight: '700',
     },
     description: {
-      color: isLight ? '#334155' : '#AEBBD0',
+      color: C.muted,
       fontSize: 12,
       lineHeight: 17,
       fontWeight: '600',
@@ -123,13 +124,13 @@ const createStyles = (isLight) =>
       alignItems: 'center',
       alignSelf: 'flex-start',
       gap: 6,
-      backgroundColor: isLight ? '#d8ebff' : '#2d3f51',
+      backgroundColor: C.accent,
       borderRadius: 999,
       paddingHorizontal: 10,
       paddingVertical: 6,
     },
     readText: {
-      color: isLight ? BRAND_COLORS.fourth : BRAND_COLORS.first,
+      color: C.accentDark,
       fontSize: 12,
       fontWeight: '900',
     },

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,8 +14,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { authStorage } from '../services/authStorage';
 import { userService } from '../services/userService';
 import { notificationService } from '../services/notificationService';
+import { useAppTheme } from '../src/theme/AppThemeContext';
 
 export default function ProfileScreen({ navigation }) {
+  const { palette: C } = useAppTheme();
+  const styles = useMemo(() => createStyles(C), [C]);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -41,7 +44,7 @@ export default function ProfileScreen({ navigation }) {
       if (remoteUser) {
         setUser(remoteUser);
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erreur', 'Impossible de charger les donnees utilisateur.');
     } finally {
       setLoading(false);
@@ -62,7 +65,7 @@ export default function ProfileScreen({ navigation }) {
         index: 0,
         routes: [{ name: 'MainTabs', params: { screen: 'Home' } }],
       });
-    } catch (error) {
+    } catch {
       Alert.alert('Erreur', 'Impossible de se deconnecter pour le moment.');
     }
   };
@@ -74,6 +77,9 @@ export default function ProfileScreen({ navigation }) {
     scoreChange: user?.notificationSettings?.scoreChange !== false,
     matchEnd: user?.notificationSettings?.matchEnd !== false,
   };
+  const displayName = user?.username || user?.name || 'Utilisateur';
+  const displayRole = user?.role || 'supporter';
+  const registeredDevices = String(user?.pushTokenCount || 0);
 
   const handleToggleNotificationSetting = async (key, value) => {
     const nextSettings = {
@@ -138,7 +144,7 @@ export default function ProfileScreen({ navigation }) {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF4D4D" />
+        <ActivityIndicator size="large" color={C.accent} />
         <Text style={styles.loadingText}>Chargement du profil...</Text>
       </View>
     );
@@ -148,30 +154,47 @@ export default function ProfileScreen({ navigation }) {
     <View style={styles.container}>
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()} activeOpacity={0.85}>
-          <Ionicons name="chevron-back" size={22} color="#FFFFFF" />
+          <Ionicons name="chevron-back" size={22} color={C.text} />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>Profil</Text>
+        <Text style={styles.topBarTitle}>Account Center</Text>
         <View style={styles.topBarSpacer} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
+          <Text style={styles.heroEyebrow}>Profile</Text>
           <View style={styles.avatar}>
-            <Ionicons name="person" size={34} color="#FFFFFF" />
+            <Ionicons name="person" size={34} color={C.accentDark} />
           </View>
-          <Text style={styles.heroName}>{user?.username || user?.name || 'Utilisateur'}</Text>
+          <Text style={styles.heroName}>{displayName}</Text>
           <Text style={styles.heroEmail}>{user?.email || 'Email indisponible'}</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusText}>Connecte</Text>
+          <View style={styles.heroMetaRow}>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusText}>Connecte</Text>
+            </View>
+            <View style={styles.rolePill}>
+              <Text style={styles.roleText}>{displayRole}</Text>
+            </View>
+          </View>
+
+          <View style={styles.heroStatsRow}>
+            <View style={styles.heroStatCard}>
+              <Text style={styles.heroStatValue}>{registeredDevices}</Text>
+              <Text style={styles.heroStatLabel}>Appareils</Text>
+            </View>
+            <View style={styles.heroStatCard}>
+              <Text style={styles.heroStatValue}>{notificationSettings.enabled ? 'ON' : 'OFF'}</Text>
+              <Text style={styles.heroStatLabel}>Notifications</Text>
+            </View>
           </View>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Informations</Text>
-          <InfoRow label="Nom" value={user?.username || user?.name || '-'} />
-          <InfoRow label="Email" value={user?.email || '-'} />
-          <InfoRow label="ID" value={user?._id || user?.id || '-'} />
-          <InfoRow label="Role" value={user?.role || 'supporter'} />
+          <InfoRow styles={styles} label="Nom" value={displayName} />
+          <InfoRow styles={styles} label="Email" value={user?.email || '-'} />
+          <InfoRow styles={styles} label="ID" value={user?._id || user?.id || '-'} />
+          <InfoRow styles={styles} label="Role" value={displayRole} />
         </View>
 
         <View style={styles.card}>
@@ -181,36 +204,46 @@ export default function ProfileScreen({ navigation }) {
           </View>
 
           <SettingsRow
+            C={C}
+            styles={styles}
             label="Activer les notifications"
             value={notificationSettings.enabled}
             onValueChange={(value) => handleToggleNotificationSetting('enabled', value)}
           />
           <SettingsRow
+            C={C}
+            styles={styles}
             label="Rappel avant match"
             value={notificationSettings.preMatch}
             onValueChange={(value) => handleToggleNotificationSetting('preMatch', value)}
             disabled={!notificationSettings.enabled}
           />
           <SettingsRow
+            C={C}
+            styles={styles}
             label="Debut du match"
             value={notificationSettings.matchStart}
             onValueChange={(value) => handleToggleNotificationSetting('matchStart', value)}
             disabled={!notificationSettings.enabled}
           />
           <SettingsRow
+            C={C}
+            styles={styles}
             label="Changement de score"
             value={notificationSettings.scoreChange}
             onValueChange={(value) => handleToggleNotificationSetting('scoreChange', value)}
             disabled={!notificationSettings.enabled}
           />
           <SettingsRow
+            C={C}
+            styles={styles}
             label="Fin du match"
             value={notificationSettings.matchEnd}
             onValueChange={(value) => handleToggleNotificationSetting('matchEnd', value)}
             disabled={!notificationSettings.enabled}
           />
 
-          <InfoRow label="Appareils enregistres" value={String(user?.pushTokenCount || 0)} />
+          <InfoRow styles={styles} label="Appareils enregistres" value={registeredDevices} />
 
           <TouchableOpacity
             style={styles.secondaryButton}
@@ -219,10 +252,10 @@ export default function ProfileScreen({ navigation }) {
             disabled={registeringDevice}
           >
             {registeringDevice ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color={C.text} />
             ) : (
               <>
-                <Ionicons name="notifications-outline" size={18} color="#FFFFFF" />
+                <Ionicons name="notifications-outline" size={18} color={C.text} />
                 <Text style={styles.secondaryButtonText}>Activer sur cet appareil</Text>
               </>
             )}
@@ -230,7 +263,7 @@ export default function ProfileScreen({ navigation }) {
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.9}>
-          <Ionicons name="log-out-outline" size={18} color="#FFFFFF" />
+          <Ionicons name="log-out-outline" size={18} color={C.accentDark} />
           <Text style={styles.logoutText}>Se deconnecter</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -238,7 +271,7 @@ export default function ProfileScreen({ navigation }) {
   );
 }
 
-function InfoRow({ label, value }) {
+function InfoRow({ styles, label, value }) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -247,7 +280,7 @@ function InfoRow({ label, value }) {
   );
 }
 
-function SettingsRow({ label, value, onValueChange, disabled = false }) {
+function SettingsRow({ C, styles, label, value, onValueChange, disabled = false }) {
   return (
     <View style={styles.infoRow}>
       <Text style={[styles.infoLabel, disabled && styles.infoLabelDisabled]}>{label}</Text>
@@ -255,17 +288,17 @@ function SettingsRow({ label, value, onValueChange, disabled = false }) {
         value={Boolean(value)}
         onValueChange={onValueChange}
         disabled={disabled}
-        trackColor={{ false: '#243246', true: '#FF4D4D' }}
-        thumbColor="#FFFFFF"
+        trackColor={{ false: C.panelAlt, true: C.accent }}
+        thumbColor={C.white}
       />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050B16',
+    backgroundColor: C.bg,
   },
   topBar: {
     paddingTop: 10,
@@ -273,9 +306,9 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0B1220',
+    backgroundColor: C.bg,
     borderBottomWidth: 1,
-    borderBottomColor: '#15233A',
+    borderBottomColor: C.border,
   },
   iconButton: {
     width: 42,
@@ -283,14 +316,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#121C2E',
+    backgroundColor: C.panel,
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: C.border,
   },
   topBarTitle: {
     flex: 1,
     textAlign: 'center',
-    color: '#FFFFFF',
+    color: C.text,
     fontSize: 17,
     fontWeight: '900',
   },
@@ -302,59 +335,113 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   heroCard: {
-    backgroundColor: '#0B1220',
+    backgroundColor: C.panel,
     borderWidth: 1,
-    borderColor: '#15233A',
-    borderRadius: 22,
-    padding: 22,
+    borderColor: C.border,
+    borderRadius: 28,
+    padding: 24,
     alignItems: 'center',
   },
+  heroEyebrow: {
+    alignSelf: 'flex-start',
+    color: C.accent,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 12,
+  },
   avatar: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+    width: 86,
+    height: 86,
+    borderRadius: 43,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FF4D4D',
+    backgroundColor: C.accent,
     marginBottom: 16,
   },
   heroName: {
-    color: '#FFFFFF',
-    fontSize: 24,
+    color: C.text,
+    fontSize: 26,
     fontWeight: '900',
   },
   heroEmail: {
     marginTop: 6,
-    color: '#A9B6CC',
+    color: C.muted,
     fontSize: 14,
   },
   statusPill: {
-    marginTop: 14,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: '#10251B',
+    backgroundColor: 'rgba(54, 209, 124, 0.12)',
     borderWidth: 1,
-    borderColor: '#1C4732',
+    borderColor: 'rgba(54, 209, 124, 0.24)',
   },
   statusText: {
-    color: '#4ADE80',
+    color: C.success,
     fontSize: 12,
     fontWeight: '800',
   },
+  heroMetaRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  rolePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: C.panelAlt,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  roleText: {
+    color: C.text,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'capitalize',
+  },
+  heroStatsRow: {
+    width: '100%',
+    marginTop: 18,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  heroStatCard: {
+    flex: 1,
+    backgroundColor: C.panelAlt,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 18,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  heroStatValue: {
+    color: C.accent,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  heroStatLabel: {
+    marginTop: 4,
+    color: C.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   card: {
     marginTop: 16,
-    backgroundColor: '#0B1220',
+    backgroundColor: C.panel,
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: C.border,
     borderRadius: 22,
     padding: 18,
   },
   sectionTitle: {
-    color: '#E8EEF8',
-    fontSize: 15,
+    color: C.text,
+    fontSize: 16,
     fontWeight: '900',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   sectionHeaderInline: {
     flexDirection: 'row',
@@ -366,12 +453,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderBottomWidth: 1,
-    borderBottomColor: '#101827',
+    borderBottomColor: C.border,
   },
   infoLabel: {
-    color: '#7F8AA3',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -381,22 +468,22 @@ const styles = StyleSheet.create({
   infoValue: {
     flex: 1,
     textAlign: 'right',
-    color: '#FFFFFF',
+    color: C.text,
     fontSize: 13,
     fontWeight: '700',
   },
   logoutButton: {
-    marginTop: 18,
-    backgroundColor: '#FF4D4D',
-    borderRadius: 18,
-    paddingVertical: 15,
+    marginTop: 20,
+    backgroundColor: C.accent,
+    borderRadius: 20,
+    paddingVertical: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
   },
   logoutText: {
-    color: '#FFFFFF',
+    color: C.accentDark,
     fontSize: 15,
     fontWeight: '900',
   },
@@ -408,12 +495,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    backgroundColor: '#18253B',
+    backgroundColor: C.panelAlt,
     borderWidth: 1,
-    borderColor: '#22324C',
+    borderColor: C.border,
   },
   secondaryButtonText: {
-    color: '#FFFFFF',
+    color: C.text,
     fontSize: 14,
     fontWeight: '900',
   },
@@ -421,11 +508,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#050B16',
+    backgroundColor: C.bg,
   },
   loadingText: {
     marginTop: 12,
-    color: '#A9B6CC',
+    color: C.muted,
     fontSize: 15,
     fontWeight: '700',
   },

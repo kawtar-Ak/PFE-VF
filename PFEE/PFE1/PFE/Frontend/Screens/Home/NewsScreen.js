@@ -15,15 +15,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { newsService } from '../../services/newsService';
 import NewsCard from '../../components/NewsCard';
 import { useAppTheme } from '../../src/theme/AppThemeContext';
-import { APP_THEME_COLORS } from '../../src/theme/colors';
 
 const NEWS_LIMIT = 20;
 
 export default function NewsScreen() {
-  const { isLight } = useAppTheme();
   const { width } = useWindowDimensions();
-  const palette = isLight ? APP_THEME_COLORS.light : APP_THEME_COLORS.dark;
-  const styles = useMemo(() => createStyles(isLight, palette, width), [isLight, palette, width]);
+  const { palette } = useAppTheme();
+  const styles = useMemo(() => createStyles(width, palette), [width, palette]);
 
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +64,7 @@ export default function NewsScreen() {
         return;
       }
       await Linking.openURL(url);
-    } catch (openError) {
+    } catch {
       setError("Erreur lors de l'ouverture de l'article.");
     }
   }, []);
@@ -75,7 +73,7 @@ export default function NewsScreen() {
     return (
       <View style={styles.screen}>
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={palette.primary} />
+          <ActivityIndicator size="large" color={palette.accent} />
           <Text style={styles.loadingText}>Chargement des actualites football...</Text>
         </View>
       </View>
@@ -85,7 +83,7 @@ export default function NewsScreen() {
   const renderHeader = () => (
     <View style={styles.header}>
       <View style={styles.headerTitleRow}>
-        <Ionicons name="newspaper-outline" size={20} color={isLight ? '#0F172A' : '#E6EDF8'} />
+        <Ionicons name="newspaper-outline" size={20} color={palette.accent} />
         <Text style={styles.headerTitle}>Actualites football</Text>
       </View>
       <Text style={styles.headerSubtitle}>BBC Sport - RSS officiel</Text>
@@ -94,7 +92,7 @@ export default function NewsScreen() {
 
   const renderEmpty = () => (
     <View style={styles.emptyWrap}>
-      <Ionicons name="football-outline" size={42} color={isLight ? '#94A3B8' : '#6E83A1'} />
+      <Ionicons name="football-outline" size={42} color={palette.muted} />
       <Text style={styles.emptyTitle}>Aucune actualite disponible</Text>
       <Text style={styles.emptySubtitle}>Tire vers le bas pour reessayer.</Text>
     </View>
@@ -106,7 +104,7 @@ export default function NewsScreen() {
         data={news}
         keyExtractor={(item, index) => item?.id || `${item?.link || 'news'}-${index}`}
         renderItem={({ item }) => (
-          <NewsCard item={item} isLight={isLight} onPress={() => handleOpenArticle(item?.link)} />
+          <NewsCard item={item} onPress={() => handleOpenArticle(item?.link)} />
         )}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader}
@@ -116,14 +114,14 @@ export default function NewsScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor={palette.primary}
+            tintColor={palette.accent}
           />
         }
       />
 
       {error ? (
         <View style={styles.errorBox}>
-          <Ionicons name="alert-circle-outline" size={16} color={isLight ? '#B91C1C' : '#FCA5A5'} />
+          <Ionicons name="alert-circle-outline" size={16} color={palette.live} />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={() => loadNews()}>
             <Text style={styles.retryText}>Reessayer</Text>
@@ -134,11 +132,11 @@ export default function NewsScreen() {
   );
 }
 
-const createStyles = (isLight, palette, width) =>
+const createStyles = (width, C) =>
   StyleSheet.create({
     screen: {
       flex: 1,
-      backgroundColor: palette.background,
+      backgroundColor: C.bg,
     },
     loadingWrap: {
       flex: 1,
@@ -148,7 +146,7 @@ const createStyles = (isLight, palette, width) =>
     },
     loadingText: {
       marginTop: 10,
-      color: isLight ? '#475569' : '#9FB1C9',
+      color: C.muted,
       fontSize: 14,
       fontWeight: '700',
       textAlign: 'center',
@@ -170,13 +168,13 @@ const createStyles = (isLight, palette, width) =>
       gap: 8,
     },
     headerTitle: {
-      color: palette.text,
+      color: C.text,
       fontSize: 24,
       fontWeight: '900',
     },
     headerSubtitle: {
       marginTop: 4,
-      color: isLight ? '#56647B' : '#90A1BC',
+      color: C.muted,
       fontSize: 13,
       fontWeight: '700',
     },
@@ -188,13 +186,13 @@ const createStyles = (isLight, palette, width) =>
     },
     emptyTitle: {
       marginTop: 10,
-      color: isLight ? '#334155' : '#C5D3E6',
+      color: C.text,
       fontSize: 16,
       fontWeight: '800',
     },
     emptySubtitle: {
       marginTop: 4,
-      color: isLight ? '#64748B' : '#8EA1BC',
+      color: C.muted,
       fontSize: 13,
       fontWeight: '700',
     },
@@ -204,8 +202,8 @@ const createStyles = (isLight, palette, width) =>
       marginTop: 2,
       borderRadius: 12,
       borderWidth: 1,
-      borderColor: isLight ? '#F5C2C2' : '#5C2222',
-      backgroundColor: isLight ? '#FFF1F1' : '#2A1212',
+      borderColor: 'rgba(255, 69, 58, 0.28)',
+      backgroundColor: C.dangerSoft,
       paddingHorizontal: 12,
       paddingVertical: 10,
       flexDirection: 'row',
@@ -214,18 +212,18 @@ const createStyles = (isLight, palette, width) =>
     },
     errorText: {
       flex: 1,
-      color: isLight ? '#B91C1C' : '#FCA5A5',
+      color: C.text,
       fontSize: 12,
       fontWeight: '700',
     },
     retryButton: {
       borderRadius: 999,
-      backgroundColor: isLight ? '#ffd8c9' : '#46586b',
+      backgroundColor: C.accent,
       paddingHorizontal: 10,
       paddingVertical: 6,
     },
     retryText: {
-      color: isLight ? palette.primary : '#e4f1fe',
+      color: C.accentDark,
       fontSize: 11,
       fontWeight: '900',
       textTransform: 'uppercase',

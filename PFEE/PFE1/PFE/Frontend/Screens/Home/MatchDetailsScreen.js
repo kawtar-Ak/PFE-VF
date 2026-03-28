@@ -13,6 +13,7 @@ import { matchService } from '../../services/matchService';
 import TeamLogo from '../../components/TeamLogo';
 import LeagueLogo from '../../components/LeagueLogo';
 import { getMatchPhase } from '../../utils/matchStatus';
+import { useAppTheme } from '../../src/theme/AppThemeContext';
 
 const TABS = [
   { key: 'summary', label: 'Resume' },
@@ -119,7 +120,7 @@ const getEventIconName = (event) => {
   return EVENT_ICON_BY_TYPE[event?.type] || 'ellipse-outline';
 };
 
-const getEventIconPalette = (event) => {
+const getEventIconPalette = (event, C) => {
   if (isCardEvent(event)) {
     const detail = String(event?.detail || '').toLowerCase();
     if (detail.includes('red')) {
@@ -139,9 +140,9 @@ const getEventIconPalette = (event) => {
   }
 
   return {
-    iconColor: '#0F172A',
-    backgroundColor: '#F8FAFC',
-    borderColor: '#D7DEE8',
+    iconColor: C.text,
+    backgroundColor: C.panel,
+    borderColor: C.border,
   };
 };
 
@@ -200,7 +201,7 @@ const buildTimelineEvents = (events, match) => {
   });
 };
 
-const getStatusBadge = (phase) => {
+const getStatusBadge = (phase, styles) => {
   if (phase === 'live') return { label: 'LIVE', style: styles.badgeLive, textStyle: styles.badgeLiveText };
   if (phase === 'finished') return { label: 'TERMINE', style: styles.badgeFinished, textStyle: styles.badgeFinishedText };
   return { label: 'A VENIR', style: styles.badgeScheduled, textStyle: styles.badgeScheduledText };
@@ -384,6 +385,8 @@ const buildStatRows = (statistics) => {
 };
 
 export default function MatchDetailsScreen({ route, navigation }) {
+  const { palette: C } = useAppTheme();
+  const styles = useMemo(() => createStyles(C), [C]);
   const initialMatch = route?.params?.match || null;
   const [match, setMatch] = useState(initialMatch);
   const [events, setEvents] = useState(Array.isArray(initialMatch?.events) ? initialMatch.events : []);
@@ -463,7 +466,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
   }, [matchId]);
 
   const phase = getMatchPhase(match);
-  const badge = getStatusBadge(phase);
+  const badge = getStatusBadge(phase, styles);
 
   const dateLabel = useMemo(() => {
     if (!match?.date) return 'Date indisponible';
@@ -542,20 +545,20 @@ export default function MatchDetailsScreen({ route, navigation }) {
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity style={styles.headerIconButton} onPress={() => navigation.goBack()} activeOpacity={0.85}>
-            <Ionicons name="arrow-back" size={22} color="#F8FAFC" />
+            <Ionicons name="arrow-back" size={22} color={C.text} />
           </TouchableOpacity>
 
           <View style={styles.headerTitleWrap}>
-            <Ionicons name="football-outline" size={18} color="#E2E8F0" />
+            <Ionicons name="football-outline" size={18} color={C.accent} />
             <Text style={styles.headerTitle}>Football</Text>
           </View>
 
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.headerIconButton} activeOpacity={0.85}>
-              <Ionicons name="share-social-outline" size={20} color="#F8FAFC" />
+              <Ionicons name="share-social-outline" size={20} color={C.text} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.headerIconButton} activeOpacity={0.85}>
-              <Ionicons name="star-outline" size={20} color="#F8FAFC" />
+              <Ionicons name="star-outline" size={20} color={C.text} />
             </TouchableOpacity>
           </View>
         </View>
@@ -563,7 +566,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FF0A5B" />
+          <ActivityIndicator size="large" color={C.accent} />
           <Text style={styles.loadingText}>Chargement des details...</Text>
         </View>
       ) : (
@@ -573,7 +576,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
               <LeagueLogo source={match} size={18} style={styles.competitionLogo} />
               <Text style={styles.competitionText} numberOfLines={1}>{competitionLabel}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#DBEAFE" />
+            <Ionicons name="chevron-forward" size={18} color={C.accent} />
           </View>
 
           <View style={styles.scorePanel}>
@@ -621,7 +624,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Text style={styles.sectionTitle}>Resume du match</Text>
-                <Ionicons name="flash-outline" size={18} color="#0F172A" />
+                <Ionicons name="flash-outline" size={18} color={C.accent} />
               </View>
 
               <View>
@@ -639,7 +642,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Text style={styles.sectionTitle}>Evenements</Text>
-                <Ionicons name="flash-outline" size={18} color="#0F172A" />
+                <Ionicons name="flash-outline" size={18} color={C.accent} />
               </View>
 
               {events.length === 0 ? (
@@ -650,37 +653,23 @@ export default function MatchDetailsScreen({ route, navigation }) {
                 </View>
               ) : (
                 <View>
-                  <SummaryEventGroup title="Buts" icon="football-outline" events={goalEvents} />
-                  <SummaryEventGroup title="Cartons" icon="square-outline" events={cardEvents} />
-                  <SummaryEventGroup title="Remplacements" icon="swap-horizontal-outline" events={subEvents} />
+                  <SummaryEventGroup title="Buts" icon="football-outline" events={goalEvents} match={match} styles={styles} C={C} />
+                  <SummaryEventGroup title="Cartons" icon="square-outline" events={cardEvents} match={match} styles={styles} C={C} />
+                  <SummaryEventGroup title="Remplacements" icon="swap-horizontal-outline" events={subEvents} match={match} styles={styles} C={C} />
 
                   {timelineEvents
                     .filter((event) => !isGoalEvent(event) && !isCardEvent(event) && !isSubEvent(event))
                     .map((event, index) => {
-                      const iconPalette = getEventIconPalette(event);
                       return (
-                        <View key={event?.id || `${event?.type}-${index}`} style={styles.timelineRow}>
-                          <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
-                          <View
-                            style={[
-                              styles.timelineIconWrap,
-                              {
-                                backgroundColor: iconPalette.backgroundColor,
-                                borderColor: iconPalette.borderColor,
-                              },
-                            ]}
-                          >
-                            <Ionicons
-                              name={getEventIconName(event)}
-                              size={16}
-                              color={iconPalette.iconColor}
-                            />
-                          </View>
-                          <View style={styles.timelineBody}>
-                            <Text style={styles.timelineTitle}>{getEventTitle(event)}</Text>
-                            <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
-                          </View>
-                        </View>
+                        <EventTimelineRow
+                          key={event?.id || `${event?.type}-${index}`}
+                          event={event}
+                          match={match}
+                          title={getEventTitle(event)}
+                          subtitle={event?.team?.name || event?.teamName || 'Equipe'}
+                          styles={styles}
+                          C={C}
+                        />
                       );
                     })}
                 </View>
@@ -692,7 +681,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Text style={styles.sectionTitle}>Top stats</Text>
-                <Ionicons name="stats-chart-outline" size={18} color="#0F172A" />
+                <Ionicons name="stats-chart-outline" size={18} color={C.accent} />
               </View>
 
               {statRows.length === 0 ? (
@@ -729,7 +718,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Text style={styles.sectionTitle}>Compositions</Text>
-                <Ionicons name="people-outline" size={18} color="#0F172A" />
+                <Ionicons name="people-outline" size={18} color={C.accent} />
               </View>
 
               {lineups.length === 0 ? (
@@ -782,7 +771,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
             <View style={styles.sectionCard}>
               <View style={styles.sectionTitleRow}>
                 <Text style={styles.sectionTitle}>Stats joueurs</Text>
-                <Ionicons name="person-outline" size={18} color="#0F172A" />
+                <Ionicons name="person-outline" size={18} color={C.accent} />
               </View>
 
               {playerRows.length === 0 ? (
@@ -821,11 +810,11 @@ export default function MatchDetailsScreen({ route, navigation }) {
   );
 }
 
-function SummaryEventGroup({ title, icon, events }) {
+function SummaryEventGroup({ title, icon, events, match, styles, C }) {
   return (
     <View>
       <View style={styles.summaryGroupHeader}>
-        <Ionicons name={icon} size={16} color="#0F172A" />
+        <Ionicons name={icon} size={16} color={C.accent} />
         <Text style={styles.summaryGroupTitle}>{title}</Text>
       </View>
 
@@ -833,38 +822,24 @@ function SummaryEventGroup({ title, icon, events }) {
         <Text style={styles.summaryGroupEmpty}>Aucun</Text>
       ) : (
         events.map((event, index) => {
-          const iconPalette = getEventIconPalette(event);
           return (
-            <View key={event?.id || `${title}-${index}`} style={styles.timelineRow}>
-              <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>
-              <View
-                style={[
-                  styles.timelineIconWrap,
-                  {
-                    backgroundColor: iconPalette.backgroundColor,
-                    borderColor: iconPalette.borderColor,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name={getEventIconName(event)}
-                  size={16}
-                  color={iconPalette.iconColor}
-                />
-              </View>
-              <View style={styles.timelineBody}>
-                <Text style={styles.timelineTitle}>{getSummaryItemText(event)}</Text>
-                {isGoalEvent(event) && event?.assist?.name ? (
-                  <Text style={styles.timelineSubtitle}>Assist: {event.assist.name}</Text>
-                ) : null}
-                {isGoalEvent(event) && event?.scoreLabel ? (
-                  <Text style={styles.timelineSubtitle}>Score: {event.scoreLabel}</Text>
-                ) : null}
-                {isSubEvent(event) ? (
-                  <Text style={styles.timelineSubtitle}>{event?.team?.name || event?.teamName || 'Equipe'}</Text>
-                ) : null}
-              </View>
-            </View>
+            <EventTimelineRow
+              key={event?.id || `${title}-${index}`}
+              event={event}
+              match={match}
+              styles={styles}
+              C={C}
+              title={getSummaryItemText(event)}
+              subtitle={
+                isGoalEvent(event) && event?.assist?.name
+                  ? `Assist: ${event.assist.name}`
+                  : isGoalEvent(event) && event?.scoreLabel
+                    ? `Score: ${event.scoreLabel}`
+                    : isSubEvent(event)
+                      ? (event?.team?.name || event?.teamName || 'Equipe')
+                      : ''
+              }
+            />
           );
         })
       )}
@@ -872,13 +847,55 @@ function SummaryEventGroup({ title, icon, events }) {
   );
 }
 
-const styles = StyleSheet.create({
+function EventTimelineRow({ event, match, title, subtitle, styles, C }) {
+  const iconPalette = getEventIconPalette(event, C);
+  const isAway = isAwayEvent(event, match);
+  const minuteNode = <Text style={styles.timelineMinute}>{getEventMinuteLabel(event)}</Text>;
+  const iconNode = (
+    <View
+      style={[
+        styles.timelineIconWrap,
+        {
+          backgroundColor: iconPalette.backgroundColor,
+          borderColor: iconPalette.borderColor,
+        },
+      ]}
+    >
+      <Ionicons
+        name={getEventIconName(event)}
+        size={16}
+        color={iconPalette.iconColor}
+      />
+    </View>
+  );
+  const bodyNode = (
+    <View style={[styles.timelineBody, isAway && styles.timelineBodyAway]}>
+      <Text style={[styles.timelineTitle, isAway && styles.timelineTitleAway]}>{title}</Text>
+      {!!subtitle && <Text style={[styles.timelineSubtitle, isAway && styles.timelineSubtitleAway]}>{subtitle}</Text>}
+    </View>
+  );
+
+  return (
+    <View
+      style={[
+        styles.timelineRow,
+        isAway ? styles.timelineRowAway : styles.timelineRowHome,
+      ]}
+    >
+      {isAway ? bodyNode : minuteNode}
+      {iconNode}
+      {isAway ? minuteNode : bodyNode}
+    </View>
+  );
+}
+
+const createStyles = (C) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#EEF2F7',
+    backgroundColor: C.bg,
   },
   header: {
-    backgroundColor: '#002D3B',
+    backgroundColor: C.bg,
     paddingTop: 10,
     paddingHorizontal: 14,
     paddingBottom: 12,
@@ -894,7 +911,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0A4354',
+    backgroundColor: C.panel,
   },
   headerTitleWrap: {
     flexDirection: 'row',
@@ -902,7 +919,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   headerTitle: {
-    color: '#F8FAFC',
+    color: C.text,
     fontSize: 20,
     fontWeight: '900',
   },
@@ -920,10 +937,10 @@ const styles = StyleSheet.create({
   competitionBar: {
     marginTop: 10,
     marginHorizontal: 12,
-    backgroundColor: '#1D4ED8',
+    backgroundColor: C.panelAlt,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1E40AF',
+    borderColor: C.border,
     paddingHorizontal: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -937,12 +954,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   competitionLogo: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: C.accent,
     borderWidth: 0,
   },
   competitionText: {
     flex: 1,
-    color: '#FFFFFF',
+    color: C.text,
     fontSize: 13,
     fontWeight: '800',
     textTransform: 'uppercase',
@@ -952,8 +969,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#D7DEE8',
-    backgroundColor: '#FFFFFF',
+    borderColor: C.border,
+    backgroundColor: C.panel,
     paddingVertical: 14,
     paddingHorizontal: 10,
     flexDirection: 'row',
@@ -965,11 +982,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   teamMainLogo: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: C.panelAlt,
   },
   teamMainName: {
     marginTop: 8,
-    color: '#0F172A',
+    color: C.text,
     fontSize: 13,
     fontWeight: '800',
     textAlign: 'center',
@@ -980,7 +997,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   kickoffText: {
-    color: '#64748B',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -992,20 +1009,20 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   scoreMain: {
-    color: '#FF0A5B',
+    color: C.accent,
     fontSize: 50,
     lineHeight: 58,
     fontWeight: '900',
   },
   scoreDash: {
-    color: '#FF0A5B',
+    color: C.accent,
     fontSize: 42,
     lineHeight: 52,
     fontWeight: '900',
     marginTop: -2,
   },
   phaseText: {
-    color: '#BE123C',
+    color: C.live,
     fontSize: 14,
     fontWeight: '900',
     marginTop: -2,
@@ -1021,22 +1038,22 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   badgeLive: {
-    backgroundColor: '#FFE4EC',
+    backgroundColor: C.live,
   },
   badgeLiveText: {
-    color: '#BE123C',
+    color: C.white,
   },
   badgeFinished: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: 'rgba(54, 209, 124, 0.15)',
   },
   badgeFinishedText: {
-    color: '#166534',
+    color: C.success,
   },
   badgeScheduled: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: C.border,
   },
   badgeScheduledText: {
-    color: '#334155',
+    color: C.muted,
   },
   tabsRow: {
     marginTop: 12,
@@ -1048,29 +1065,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.panel,
     borderWidth: 1,
-    borderColor: '#D7DEE8',
+    borderColor: C.border,
   },
   tabButtonActive: {
-    backgroundColor: '#FF0A5B',
-    borderColor: '#FF0A5B',
+    backgroundColor: C.accent,
+    borderColor: C.accent,
   },
   tabText: {
-    color: '#334155',
+    color: C.muted,
     fontSize: 14,
     fontWeight: '900',
   },
   tabTextActive: {
-    color: '#FFFFFF',
+    color: C.accentDark,
   },
   sectionCard: {
     marginTop: 12,
     marginHorizontal: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.panel,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#D7DEE8',
+    borderColor: C.border,
     padding: 14,
   },
   sectionTitleRow: {
@@ -1080,25 +1097,25 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionTitle: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 20,
     fontWeight: '900',
   },
   emptyText: {
-    color: '#64748B',
+    color: C.muted,
     fontSize: 13,
     fontWeight: '700',
     paddingVertical: 6,
   },
   emptyHint: {
     marginTop: 6,
-    color: '#475569',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '700',
   },
   infoFallbackRow: {
     borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
+    borderTopColor: C.bg,
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1106,14 +1123,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   infoFallbackLabel: {
-    color: '#475569',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '800',
   },
   infoFallbackValue: {
     flex: 1,
     textAlign: 'right',
-    color: '#0F172A',
+    color: C.text,
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1123,11 +1140,17 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
+    borderTopColor: C.bg,
+  },
+  timelineRowHome: {
+    justifyContent: 'flex-start',
+  },
+  timelineRowAway: {
+    justifyContent: 'flex-end',
   },
   timelineMinute: {
     width: 44,
-    color: '#0F172A',
+    color: C.text,
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1137,23 +1160,32 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: C.panelAlt,
     borderWidth: 1,
-    borderColor: '#D7DEE8',
+    borderColor: C.border,
   },
   timelineBody: {
     flex: 1,
   },
+  timelineBodyAway: {
+    alignItems: 'flex-end',
+  },
   timelineTitle: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 14,
     fontWeight: '800',
   },
+  timelineTitleAway: {
+    textAlign: 'right',
+  },
   timelineSubtitle: {
     marginTop: 2,
-    color: '#64748B',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '700',
+  },
+  timelineSubtitleAway: {
+    textAlign: 'right',
   },
   summaryGroupHeader: {
     marginTop: 10,
@@ -1162,19 +1194,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   summaryGroupTitle: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 16,
     fontWeight: '900',
   },
   summaryGroupEmpty: {
     marginTop: 6,
-    color: '#64748B',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '700',
   },
   statBlock: {
     borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
+    borderTopColor: C.bg,
     paddingVertical: 10,
   },
   statHeaderRow: {
@@ -1186,14 +1218,14 @@ const styles = StyleSheet.create({
   },
   statSideValue: {
     width: 68,
-    color: '#0F172A',
+    color: C.text,
     fontSize: 14,
     fontWeight: '900',
     textAlign: 'center',
   },
   statLabel: {
     flex: 1,
-    color: '#0F172A',
+    color: C.text,
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'center',
@@ -1207,14 +1239,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statBarHome: {
-    backgroundColor: '#0B3A48',
+    backgroundColor: '#1f5fa8',
   },
   statBarAway: {
-    backgroundColor: '#FF0A5B',
+    backgroundColor: C.accent,
   },
   lineupCard: {
     borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
+    borderTopColor: C.bg,
     paddingTop: 12,
     paddingBottom: 6,
   },
@@ -1230,18 +1262,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   lineupTeamName: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 16,
     fontWeight: '900',
   },
   lineupFormation: {
-    color: '#334155',
+    color: C.muted,
     fontSize: 13,
     fontWeight: '800',
   },
   lineupSubTitle: {
     marginTop: 10,
-    color: '#BE123C',
+    color: C.live,
     fontSize: 13,
     fontWeight: '900',
     textTransform: 'uppercase',
@@ -1254,7 +1286,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: C.border,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -1262,25 +1294,25 @@ const styles = StyleSheet.create({
   },
   playerNumber: {
     width: 24,
-    color: '#64748B',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '900',
     textAlign: 'center',
   },
   playerName: {
     flex: 1,
-    color: '#0F172A',
+    color: C.text,
     fontSize: 14,
     fontWeight: '800',
   },
   playerPos: {
-    color: '#334155',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '800',
   },
   playerStatRow: {
     borderTopWidth: 1,
-    borderTopColor: '#EEF2F7',
+    borderTopColor: C.bg,
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1288,7 +1320,7 @@ const styles = StyleSheet.create({
   },
   rankText: {
     width: 22,
-    color: '#334155',
+    color: C.muted,
     fontSize: 14,
     fontWeight: '900',
   },
@@ -1299,19 +1331,19 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   playerTeamLogo: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: C.panelAlt,
   },
   playerIdentityTextWrap: {
     flex: 1,
   },
   playerStatName: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 16,
     fontWeight: '900',
   },
   playerStatMeta: {
     marginTop: 2,
-    color: '#64748B',
+    color: C.muted,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1320,11 +1352,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 9,
-    backgroundColor: '#E6F0FF',
+    backgroundColor: C.accent,
     alignItems: 'center',
   },
   impactBadgeText: {
-    color: '#1D4ED8',
+    color: C.accentDark,
     fontSize: 14,
     fontWeight: '900',
   },
@@ -1335,7 +1367,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 10,
-    color: '#334155',
+    color: C.muted,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -1343,24 +1375,25 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EEF2F7',
+    backgroundColor: C.bg,
     paddingHorizontal: 20,
   },
   emptyTitle: {
-    color: '#0F172A',
+    color: C.text,
     fontSize: 20,
     fontWeight: '900',
     marginBottom: 12,
   },
   primaryButton: {
-    backgroundColor: '#FF0A5B',
+    backgroundColor: C.accent,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: C.accentDark,
     fontSize: 14,
     fontWeight: '900',
   },
 });
+

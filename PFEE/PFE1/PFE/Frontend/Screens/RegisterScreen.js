@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   ActivityIndicator,
-  ImageBackground,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,11 +10,13 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { API_BASE_URL } from '../services/apiConfig';
 import { authStorage } from '../services/authStorage';
 import { favoritesService } from '../services/favoritesService';
 import { notificationService } from '../services/notificationService';
+import { useAppTheme } from '../src/theme/AppThemeContext';
 
 const API_URL = `${API_BASE_URL}/api/user`;
 const EMAIL_REGEX = /^(?!.*\s)(?!\.)(?!.*\.\.)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -54,7 +55,7 @@ const getPasswordAnalysis = (password) => {
   if (!criteria.digit) missing.push('un chiffre');
   if (!criteria.special) missing.push('un symbole');
 
-  return { criteria, passedCount, strength, missing };
+  return { criteria, strength, missing };
 };
 
 const normalizeEmail = (value) => value.trim().toLowerCase();
@@ -86,13 +87,23 @@ const getPasswordAdvice = (missing) => {
   return `Ajoutez ${missing.slice(0, -1).join(', ')} et ${missing[missing.length - 1]}.`;
 };
 
-const strengthMeta = {
-  FAIBLE: { label: 'Faible', color: '#FF6B6B', width: '33%' },
+const getStrengthMeta = (C) => ({
+  FAIBLE: { label: 'Faible', color: C.live, width: '33%' },
   MOYEN: { label: 'Moyen', color: '#F4B942', width: '66%' },
-  FORT: { label: 'Fort', color: '#2ECC71', width: '100%' },
-};
+  FORT: { label: 'Fort', color: C.success, width: '100%' },
+});
 
 export default function RegisterScreen({ navigation, route }) {
+  const { width } = useWindowDimensions();
+  const { palette: C, isDark } = useAppTheme();
+  const isWide = width >= 980;
+  const isTablet = width >= 640;
+  const isCompact = width < 390;
+  const styles = useMemo(
+    () => createStyles(C, isDark, { isWide, isTablet, isCompact }),
+    [C, isDark, isWide, isTablet, isCompact]
+  );
+
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -119,6 +130,16 @@ export default function RegisterScreen({ navigation, route }) {
     return '';
   }, [confirmPassword, password]);
 
+  const strengthMeta = getStrengthMeta(C)[passwordAnalysis.strength];
+
+  const criteriaItems = [
+    { key: 'length', label: '10 caracteres minimum', ok: passwordAnalysis.criteria.length },
+    { key: 'lowercase', label: 'Une minuscule', ok: passwordAnalysis.criteria.lowercase },
+    { key: 'uppercase', label: 'Une majuscule', ok: passwordAnalysis.criteria.uppercase },
+    { key: 'digit', label: 'Un chiffre', ok: passwordAnalysis.criteria.digit },
+    { key: 'special', label: 'Un symbole', ok: passwordAnalysis.criteria.special },
+  ];
+
   const canSubmit = useMemo(() => (
     !loading &&
     normalizedUsername &&
@@ -141,7 +162,7 @@ export default function RegisterScreen({ navigation, route }) {
     passwordAnalysis.strength,
   ]);
 
-  const handleRedirectAfterRegister = () => {
+  const handleRedirectAfterRegister = useCallback(() => {
     if (redirectTo === 'Favoris') {
       navigation.replace('MainTabs', { screen: 'Favoris' });
       return;
@@ -153,9 +174,9 @@ export default function RegisterScreen({ navigation, route }) {
     }
 
     navigation.replace('MainTabs', { screen: 'Home' });
-  };
+  }, [navigation, redirectTo]);
 
-  const handleRegister = async () => {
+  const handleRegister = useCallback(async () => {
     const nextErrors = {
       username: usernameError,
       email: emailError,
@@ -181,6 +202,7 @@ export default function RegisterScreen({ navigation, route }) {
     }
 
     setLoading(true);
+
     try {
       const response = await fetch(`${API_URL}/register`, {
         method: 'POST',
@@ -213,42 +235,43 @@ export default function RegisterScreen({ navigation, route }) {
       await favoritesService.syncWithServer();
       await notificationService.bootstrapForAuthenticatedUser({ forcePermissionPrompt: true });
       handleRedirectAfterRegister();
-    } catch (error) {
+    } catch {
       Alert.alert('Erreur', 'Impossible de joindre le serveur.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const currentStrength = strengthMeta[passwordAnalysis.strength];
-  const criteriaItems = [
-    { key: 'length', label: '10 caracteres minimum', ok: passwordAnalysis.criteria.length },
-    { key: 'lowercase', label: 'Une minuscule', ok: passwordAnalysis.criteria.lowercase },
-    { key: 'uppercase', label: 'Une majuscule', ok: passwordAnalysis.criteria.uppercase },
-    { key: 'digit', label: 'Un chiffre', ok: passwordAnalysis.criteria.digit },
-    { key: 'special', label: 'Un symbole', ok: passwordAnalysis.criteria.special },
-  ];
+  }, [
+    confirmPassword,
+    confirmPasswordError,
+    emailError,
+    handleRedirectAfterRegister,
+    normalizedEmail,
+    normalizedUsername,
+    password,
+    passwordAnalysis.missing,
+    passwordAnalysis.strength,
+    usernameError,
+  ]);
 
   return (
-    <ImageBackground
-      source={require('../img/result_0.jpeg')}
-      style={styles.background}
-      resizeMode="cover"
-    >
-      <View style={styles.overlay} />
+    <View style={styles.screen}>
+      <View style={styles.glowTop} />
+      <View style={styles.glowBottom} />
+      <View style={styles.meshOrb} />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.flex}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
           <View style={styles.shell}>
-            <View style={styles.hero}>
-              <Text style={styles.kicker}>Nouveau compte</Text>
+            <View style={styles.heroCard}>
+              <View style={styles.heroPill}>
+                <View style={styles.heroPillDot} />
+                <Text style={styles.heroPillText}>KICKLY ACCOUNT</Text>
+              </View>
+
+              <Text style={styles.heroKicker}>Nouveau compte</Text>
               <Text style={styles.heroTitle}>Un compte seulement si vous en avez besoin.</Text>
               <Text style={styles.heroText}>
-                L'application reste accessible sans connexion. Creez un compte pour retrouver vos favoris et vos
-                informations sur tous vos appareils.
+                L&apos;application reste accessible sans connexion. Creez un compte pour retrouver vos favoris et vos informations sur tous vos appareils.
               </Text>
 
               <TouchableOpacity
@@ -260,14 +283,17 @@ export default function RegisterScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Inscription</Text>
-              <Text style={styles.cardSubtitle}>{subtitle}</Text>
+            <View style={styles.authCard}>
+              <View style={styles.authHeader}>
+                <Text style={styles.authEyebrow}>Bienvenue</Text>
+                <Text style={styles.authTitle}>Inscription</Text>
+                <Text style={styles.authSubtitle}>{subtitle}</Text>
+              </View>
 
               <TextInput
                 style={[styles.input, fieldErrors.username ? styles.inputError : null]}
                 placeholder="Nom d'utilisateur"
-                placeholderTextColor="#7F8AA3"
+                placeholderTextColor={styles.placeholder.color}
                 value={username}
                 onChangeText={(value) => {
                   setUsername(value);
@@ -276,14 +302,14 @@ export default function RegisterScreen({ navigation, route }) {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              {!!(fieldErrors.username || usernameError) && (
+              {!!(fieldErrors.username || usernameError) ? (
                 <Text style={styles.errorText}>{fieldErrors.username || usernameError}</Text>
-              )}
+              ) : null}
 
               <TextInput
                 style={[styles.input, fieldErrors.email ? styles.inputError : null]}
                 placeholder="Adresse email"
-                placeholderTextColor="#7F8AA3"
+                placeholderTextColor={styles.placeholder.color}
                 value={email}
                 onChangeText={(value) => {
                   setEmail(value);
@@ -293,14 +319,14 @@ export default function RegisterScreen({ navigation, route }) {
                 autoCorrect={false}
                 keyboardType="email-address"
               />
-              {!!(fieldErrors.email || emailError) && (
+              {!!(fieldErrors.email || emailError) ? (
                 <Text style={styles.errorText}>{fieldErrors.email || emailError}</Text>
-              )}
+              ) : null}
 
               <TextInput
                 style={[styles.input, fieldErrors.password ? styles.inputError : null]}
                 placeholder="Mot de passe"
-                placeholderTextColor="#7F8AA3"
+                placeholderTextColor={styles.placeholder.color}
                 value={password}
                 onChangeText={(value) => {
                   setPassword(value);
@@ -312,12 +338,17 @@ export default function RegisterScreen({ navigation, route }) {
 
               <View style={styles.strengthHeader}>
                 <Text style={styles.strengthLabel}>Niveau</Text>
-                <Text style={[styles.strengthValue, { color: currentStrength.color }]}>
-                  {currentStrength.label}
+                <Text style={[styles.strengthValue, { color: strengthMeta.color }]}>
+                  {strengthMeta.label}
                 </Text>
               </View>
               <View style={styles.strengthTrack}>
-                <View style={[styles.strengthFill, { width: currentStrength.width, backgroundColor: currentStrength.color }]} />
+                <View
+                  style={[
+                    styles.strengthFill,
+                    { width: strengthMeta.width, backgroundColor: strengthMeta.color },
+                  ]}
+                />
               </View>
               <Text style={styles.helperText}>{getPasswordAdvice(passwordAnalysis.missing)}</Text>
 
@@ -329,12 +360,12 @@ export default function RegisterScreen({ navigation, route }) {
                 ))}
               </View>
 
-              {!!fieldErrors.password && <Text style={styles.errorText}>{fieldErrors.password}</Text>}
+              {!!fieldErrors.password ? <Text style={styles.errorText}>{fieldErrors.password}</Text> : null}
 
               <TextInput
                 style={[styles.input, fieldErrors.confirmPassword ? styles.inputError : null]}
                 placeholder="Confirmer le mot de passe"
-                placeholderTextColor="#7F8AA3"
+                placeholderTextColor={styles.placeholder.color}
                 value={confirmPassword}
                 onChangeText={(value) => {
                   setConfirmPassword(value);
@@ -343,9 +374,9 @@ export default function RegisterScreen({ navigation, route }) {
                 secureTextEntry
                 autoCorrect={false}
               />
-              {!!(fieldErrors.confirmPassword || confirmPasswordError) && (
+              {!!(fieldErrors.confirmPassword || confirmPasswordError) ? (
                 <Text style={styles.errorText}>{fieldErrors.confirmPassword || confirmPasswordError}</Text>
-              )}
+              ) : null}
 
               <TouchableOpacity
                 style={[styles.primaryButton, !canSubmit && styles.buttonDisabled]}
@@ -353,7 +384,11 @@ export default function RegisterScreen({ navigation, route }) {
                 disabled={!canSubmit}
                 activeOpacity={0.9}
               >
-                {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryButtonText}>Creer mon compte</Text>}
+                {loading ? (
+                  <ActivityIndicator color={C.accentDark} />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Creer mon compte</Text>
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -361,70 +396,125 @@ export default function RegisterScreen({ navigation, route }) {
                 activeOpacity={0.85}
                 onPress={() => navigation.navigate('Login', { redirectTo, message })}
               >
-                <Text style={styles.linkText}>J'ai deja un compte</Text>
+                <Text style={styles.linkText}>J&apos;ai deja un compte</Text>
               </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </ImageBackground>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C, isDark, { isWide, isTablet, isCompact }) => StyleSheet.create({
   flex: {
     flex: 1,
   },
-  background: {
+  screen: {
     flex: 1,
-    backgroundColor: '#050B16',
+    backgroundColor: isDark ? '#08100b' : '#edf3fb',
+    overflow: 'hidden',
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(5, 11, 22, 0.72)',
+  glowTop: {
+    position: 'absolute',
+    top: -120,
+    right: -50,
+    width: 260,
+    height: 260,
+    borderRadius: 999,
+    backgroundColor: isDark ? 'rgba(200,255,54,0.10)' : 'rgba(47,159,232,0.14)',
+  },
+  glowBottom: {
+    position: 'absolute',
+    bottom: -140,
+    left: -80,
+    width: 300,
+    height: 300,
+    borderRadius: 999,
+    backgroundColor: isDark ? 'rgba(54,209,124,0.08)' : 'rgba(92,167,255,0.12)',
+  },
+  meshOrb: {
+    position: 'absolute',
+    top: '28%',
+    left: '62%',
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.55)',
   },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 32,
+    paddingHorizontal: isCompact ? 12 : 20,
+    paddingVertical: isCompact ? 18 : 28,
   },
   shell: {
     width: '100%',
-    maxWidth: 1120,
+    maxWidth: 1080,
     alignSelf: 'center',
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 20,
+    flexDirection: isWide ? 'row' : 'column',
+    gap: isCompact ? 14 : 20,
+    alignItems: 'stretch',
   },
-  hero: {
-    flex: 1,
-    minHeight: 260,
-    backgroundColor: 'rgba(11, 18, 32, 0.82)',
+  heroCard: {
+    flex: isWide ? 0.95 : 0,
+    minHeight: isCompact ? 196 : isTablet ? 230 : 208,
+    borderRadius: isCompact ? 24 : 30,
+    padding: isCompact ? 18 : 26,
+    backgroundColor: isDark ? 'rgba(15,24,18,0.88)' : 'rgba(255,255,255,0.88)',
     borderWidth: 1,
-    borderColor: '#15233A',
-    borderRadius: 28,
-    padding: 28,
-    justifyContent: 'space-between',
+    borderColor: isDark ? 'rgba(255,255,255,0.06)' : C.border,
+    shadowColor: isDark ? '#000000' : '#8fa6c7',
+    shadowOpacity: isDark ? 0.18 : 0.14,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 6,
   },
-  kicker: {
-    color: '#7DB5FF',
+  heroPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: isDark ? 'rgba(200,255,54,0.10)' : 'rgba(47,159,232,0.10)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(200,255,54,0.14)' : 'rgba(47,159,232,0.12)',
+  },
+  heroPillDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: C.accent,
+  },
+  heroPillText: {
+    color: C.text,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  heroKicker: {
+    marginTop: 16,
+    color: C.accent,
     fontSize: 13,
     fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
   heroTitle: {
-    marginTop: 14,
-    color: '#FFFFFF',
-    fontSize: 32,
-    lineHeight: 38,
+    marginTop: 10,
+    color: C.text,
+    fontSize: isCompact ? 24 : isTablet ? 34 : 28,
+    lineHeight: isCompact ? 30 : isTablet ? 40 : 34,
     fontWeight: '900',
+    maxWidth: isWide ? 420 : '100%',
   },
   heroText: {
     marginTop: 12,
-    color: '#A9B6CC',
-    fontSize: 15,
-    lineHeight: 23,
+    color: C.muted,
+    fontSize: isCompact ? 13 : 15,
+    lineHeight: isCompact ? 20 : 23,
     maxWidth: 460,
   },
   secondaryButton: {
@@ -432,72 +522,84 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 18,
     paddingVertical: 12,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#223552',
-    backgroundColor: '#0F1A2D',
+    borderColor: C.border,
+    backgroundColor: C.panel,
   },
   secondaryButtonText: {
-    color: '#E8EEF8',
+    color: C.text,
     fontSize: 14,
     fontWeight: '800',
   },
-  card: {
+  authCard: {
     flex: 1,
-    maxWidth: Platform.OS === 'web' ? 420 : '100%',
-    backgroundColor: 'rgba(11, 18, 32, 0.94)',
-    borderWidth: 1,
-    borderColor: '#15233A',
-    borderRadius: 28,
-    padding: 24,
-    alignSelf: 'center',
+    maxWidth: isWide ? 430 : '100%',
     width: '100%',
+    alignSelf: 'center',
+    borderRadius: isCompact ? 24 : 30,
+    padding: isCompact ? 16 : 24,
+    backgroundColor: isDark ? 'rgba(11,18,14,0.94)' : 'rgba(255,255,255,0.98)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255,255,255,0.06)' : C.border,
+    shadowColor: isDark ? '#000000' : '#8fa6c7',
+    shadowOpacity: isDark ? 0.18 : 0.16,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 7,
   },
-  cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 28,
+  authHeader: {
+    marginBottom: 18,
+  },
+  authEyebrow: {
+    color: C.accent,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.9,
+    marginBottom: 8,
+  },
+  authTitle: {
+    color: C.text,
+    fontSize: isCompact ? 26 : 30,
     fontWeight: '900',
   },
-  cardSubtitle: {
-    color: '#A9B6CC',
+  authSubtitle: {
+    color: C.muted,
     fontSize: 14,
     lineHeight: 21,
     marginTop: 8,
-    marginBottom: 22,
   },
   input: {
-    backgroundColor: '#121C2E',
-    borderRadius: 16,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : C.panelAlt,
+    borderRadius: 18,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: isCompact ? 12 : 14,
     marginBottom: 8,
-    color: '#FFFFFF',
+    color: C.text,
     borderWidth: 1,
-    borderColor: '#15233A',
+    borderColor: C.border,
     fontSize: 15,
   },
+  placeholder: {
+    color: isDark ? '#8ea18f' : '#7f8aa3',
+  },
   inputError: {
-    borderColor: '#FF6B6B',
+    borderColor: C.live,
   },
   errorText: {
-    color: '#FF9B9B',
+    color: C.live,
     fontSize: 12,
     marginBottom: 10,
   },
-  helperText: {
-    color: '#A9B6CC',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 8,
-  },
   strengthHeader: {
-    marginTop: 4,
+    marginTop: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   strengthLabel: {
-    color: '#E8EEF8',
+    color: C.text,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -510,12 +612,18 @@ const styles = StyleSheet.create({
     height: 8,
     width: '100%',
     borderRadius: 999,
-    backgroundColor: '#16243B',
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : C.panelSoft,
     overflow: 'hidden',
   },
   strengthFill: {
     height: '100%',
     borderRadius: 999,
+  },
+  helperText: {
+    color: C.muted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
   },
   criteriaList: {
     marginTop: 12,
@@ -527,32 +635,39 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   criteriaOk: {
-    color: '#7BE495',
+    color: C.success,
   },
   criteriaKo: {
-    color: '#A9B6CC',
+    color: C.muted,
   },
   primaryButton: {
     marginTop: 8,
-    backgroundColor: '#FF4D4D',
-    borderRadius: 16,
-    paddingVertical: 15,
+    backgroundColor: C.accent,
+    borderRadius: 18,
+    paddingVertical: 16,
     alignItems: 'center',
+    shadowColor: C.accent,
+    shadowOpacity: isDark ? 0.18 : 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
   },
   buttonDisabled: {
     opacity: 0.45,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: C.accentDark,
     fontSize: 16,
     fontWeight: '900',
   },
   linkRow: {
     marginTop: 18,
     alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
   },
   linkText: {
-    color: '#7DB5FF',
+    color: C.accent,
     fontSize: 14,
     fontWeight: '800',
   },
