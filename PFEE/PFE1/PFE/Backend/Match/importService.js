@@ -6,8 +6,12 @@ const Team = require("./TeamModel");
 const League = require("./LeagueModel");
 const { notifyUsersForMatchUpdate } = require("../Notification/notificationService");
 
-const API_SPORTS_BASE_URL = "https://v3.football.api-sports.io";
-const API_SPORTS_KEY = process.env.APISPORTS_KEY;
+const API_SPORTS_BASE_URL = String(
+  process.env.APISPORTS_BASE_URL ||
+  process.env.API_SPORTS_BASE_URL ||
+  "https://v3.football.api-sports.io"
+).replace(/\/+$/, "");
+const API_SPORTS_KEY = process.env.APISPORTS_KEY || process.env.API_SPORTS_KEY;
 const IMPORT_TIMEZONE = process.env.MATCH_TIMEZONE || "Europe/Paris";
 
 const readNumberEnv = (name, fallback) => {
@@ -64,6 +68,16 @@ const getCurrentSeason = () => {
 };
 
 const formatDate = (date) => date.toISOString().slice(0, 10);
+const normalizeText = (value) => String(value || "").trim();
+const hasText = (value) => normalizeText(value) !== "";
+const hasMeaningfulTeamName = (value) => {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized !== "" && normalized !== "unknown";
+};
+const hasMeaningfulLeagueName = (value) => {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized !== "" && normalized !== "unknown league";
+};
 
 const getNextUtcMidnight = () => {
   const now = new Date();
@@ -140,8 +154,8 @@ const mapStatus = (shortStatus = "") => {
 
 const requestApiSports = async (path, params = {}) => {
   if (!API_SPORTS_KEY) {
-    apiSportsLastError = { config: "API_SPORTS_KEY not configured" };
-    console.warn("API_SPORTS_KEY not configured.");
+    apiSportsLastError = { config: "APISPORTS_KEY not configured" };
+    console.warn("APISPORTS_KEY not configured.");
     return [];
   }
 
@@ -343,6 +357,12 @@ const dedupeEventsById = (events = []) => {
   return output;
 };
 
+const fixtureHasMissingLogos = (fixturePayload) => (
+  !hasText(fixturePayload?.league?.logo) ||
+  !hasText(fixturePayload?.homeTeam?.logo) ||
+  !hasText(fixturePayload?.awayTeam?.logo)
+);
+
 const isDynamicChange = (existing, nextPayload) => {
   if (!existing) return true;
 
@@ -380,12 +400,20 @@ const hasCoreDynamicChange = (existing, incoming) => {
 const upsertTeam = async (teamPayload) => {
   if (!teamPayload?.teamId) return null;
 
+  const existing = await Team.findOne({ teamId: teamPayload.teamId }).lean();
+  const nextName = hasMeaningfulTeamName(teamPayload.name)
+    ? normalizeText(teamPayload.name)
+    : (existing?.name || `Team ${teamPayload.teamId}`);
+  const nextLogo = hasText(teamPayload.logo)
+    ? normalizeText(teamPayload.logo)
+    : (existing?.logo || null);
+
   return Team.findOneAndUpdate(
     { teamId: teamPayload.teamId },
     {
       $set: {
-        name: teamPayload.name,
-        logo: teamPayload.logo || null,
+        name: nextName,
+        logo: nextLogo,
         updatedAt: new Date()
       },
       $setOnInsert: {
@@ -399,6 +427,23 @@ const upsertTeam = async (teamPayload) => {
 const upsertLeague = async (leaguePayload) => {
   if (!leaguePayload?.leagueId || !leaguePayload?.season) return null;
 
+  const existing = await League.findOne({
+    leagueId: leaguePayload.leagueId,
+    season: leaguePayload.season
+  }).lean();
+  const nextName = hasMeaningfulLeagueName(leaguePayload.name)
+    ? normalizeText(leaguePayload.name)
+    : (existing?.name || `League ${leaguePayload.leagueId}`);
+  const nextCountry = hasText(leaguePayload.country)
+    ? normalizeText(leaguePayload.country)
+    : (existing?.country || null);
+  const nextLogo = hasText(leaguePayload.logo)
+    ? normalizeText(leaguePayload.logo)
+    : (existing?.logo || null);
+  const nextFlag = hasText(leaguePayload.flag)
+    ? normalizeText(leaguePayload.flag)
+    : (existing?.flag || null);
+
   return League.findOneAndUpdate(
     {
       leagueId: leaguePayload.leagueId,
@@ -406,10 +451,10 @@ const upsertLeague = async (leaguePayload) => {
     },
     {
       $set: {
-        name: leaguePayload.name,
-        country: leaguePayload.country || null,
-        logo: leaguePayload.logo || null,
-        flag: leaguePayload.flag || null,
+        name: nextName,
+        country: nextCountry,
+        logo: nextLogo,
+        flag: nextFlag,
         updatedAt: new Date()
       },
       $setOnInsert: {
@@ -470,8 +515,20 @@ const syncMatches = async (matches, io, options = {}) => {
   const teamCache = new Map();
   const leagueCache = new Map();
 
-  for (const incoming of matches) {
+  for (const rawIncoming of matches) {
+    let incoming = rawIncoming;
     if (!incoming?.fixtureId || !incoming?.date) continue;
+
+    if (fixtureHasMissingLogos(incoming)) {
+      const enrichedFixture = await fetchFixtureById(incoming.fixtureId);
+      if (enrichedFixture) {
+        incoming = transformFixture(
+          enrichedFixture,
+          incoming.leagueCode || null,
+          incoming.league?.name || null
+        );
+      }
+    }
 
     const homeTeamKey = incoming.homeTeam?.teamId;
     const awayTeamKey = incoming.awayTeam?.teamId;
@@ -585,7 +642,8 @@ const syncMatches = async (matches, io, options = {}) => {
     upserted += 1;
 
     if (emitUpdates && io) {
-      io.emit("match:update", saved);
+      const hydratedMatch = await findStoredMatchById(incoming.fixtureId);
+      io.emit("match:update", hydratedMatch || saved);
       emitted += 1;
     }
 
@@ -621,7 +679,7 @@ const importLeagueMatches = async (leagueCode, io = null) => {
     }
 
     if (!API_SPORTS_KEY) {
-      return { success: false, message: "API_SPORTS_KEY not configured", count: 0 };
+      return { success: false, message: "APISPORTS_KEY not configured", count: 0 };
     }
 
     const fixtures = await fetchLeagueFixtures(leagueCode);
@@ -663,7 +721,7 @@ const importAllMatches = async (io = null, options = {}) => {
 
   try {
     if (!API_SPORTS_KEY) {
-      return { success: false, message: "API_SPORTS_KEY not configured", count: 0 };
+      return { success: false, message: "APISPORTS_KEY not configured", count: 0 };
     }
 
       importAllInProgress = true;
@@ -716,7 +774,7 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
 
   try {
     if (!API_SPORTS_KEY) {
-      return { success: false, message: "API_SPORTS_KEY not configured", count: 0, emitted: 0 };
+      return { success: false, message: "APISPORTS_KEY not configured", count: 0, emitted: 0 };
     }
 
     livePollInProgress = true;
@@ -841,6 +899,86 @@ const buildMatchQueryById = (fixtureId) => ({
   ]
 });
 
+const hydrateStoredMatchDetails = async (fixtureId, options = {}) => {
+  const safeFixtureId = Number(fixtureId);
+  if (!Number.isInteger(safeFixtureId)) {
+    return { stored: null, events: [], statistics: [], lineups: [], updated: false };
+  }
+
+  const existing = await Match.findOne(buildMatchQueryById(safeFixtureId))
+    .select({ events: 1, statistics: 1, lineups: 1 })
+    .lean();
+
+  if (!existing) {
+    return { stored: null, events: [], statistics: [], lineups: [], updated: false };
+  }
+
+  const shouldFetchEvents = options.force === true || !Array.isArray(existing.events) || existing.events.length === 0;
+  const shouldFetchStatistics = options.force === true || !Array.isArray(existing.statistics) || existing.statistics.length === 0;
+  const shouldFetchLineups = options.force === true || !Array.isArray(existing.lineups) || existing.lineups.length === 0;
+
+  if (!shouldFetchEvents && !shouldFetchStatistics && !shouldFetchLineups) {
+    return {
+      stored: existing,
+      events: existing.events || [],
+      statistics: existing.statistics || [],
+      lineups: existing.lineups || [],
+      updated: false
+    };
+  }
+
+  const [eventsResponse, statisticsResponse, lineupsResponse] = await Promise.all([
+    shouldFetchEvents ? fetchFixtureEvents(safeFixtureId) : Promise.resolve(null),
+    shouldFetchStatistics ? fetchFixtureStatistics(safeFixtureId) : Promise.resolve(null),
+    shouldFetchLineups ? fetchFixtureLineups(safeFixtureId) : Promise.resolve(null)
+  ]);
+
+  const nextEvents = Array.isArray(eventsResponse)
+    ? dedupeEventsById(eventsResponse.map(mapEventForStorage))
+    : null;
+  const nextStatistics = Array.isArray(statisticsResponse)
+    ? statisticsResponse.map(mapStatistics)
+    : null;
+  const nextLineups = Array.isArray(lineupsResponse)
+    ? lineupsResponse.map(mapLineup)
+    : null;
+
+  const updatePayload = {};
+
+  if (Array.isArray(nextEvents) && nextEvents.length > 0) {
+    updatePayload.events = nextEvents;
+  }
+
+  if (Array.isArray(nextStatistics) && nextStatistics.length > 0) {
+    updatePayload.statistics = nextStatistics;
+  }
+
+  if (Array.isArray(nextLineups) && nextLineups.length > 0) {
+    updatePayload.lineups = nextLineups;
+  }
+
+  if (Object.keys(updatePayload).length > 0) {
+    updatePayload.updatedAt = new Date();
+    await Match.findOneAndUpdate(
+      buildMatchQueryById(safeFixtureId),
+      { $set: updatePayload },
+      { new: false }
+    );
+  }
+
+  const stored = await Match.findOne(buildMatchQueryById(safeFixtureId))
+    .select({ events: 1, statistics: 1, lineups: 1 })
+    .lean();
+
+  return {
+    stored,
+    events: stored?.events || [],
+    statistics: stored?.statistics || [],
+    lineups: stored?.lineups || [],
+    updated: Object.keys(updatePayload).length > 0
+  };
+};
+
 const findStoredMatchById = async (fixtureId) => {
   const match = await Match.findOne(buildMatchQueryById(fixtureId))
     .populate("homeTeamRef")
@@ -855,16 +993,16 @@ const getMatchDetails = async (fixtureId) => {
   const fixture = await fetchFixtureById(fixtureId);
   if (fixture) {
     const transformed = transformFixture(fixture);
-    const hydrated = await syncMatches([transformed], null, {
+    await syncMatches([transformed], null, {
       emitUpdates: false,
       includeLiveEvents: true,
       includeFinishedDetails: true
     });
-    if (hydrated.upserted >= 0) {
-      const stored = await findStoredMatchById(fixtureId);
-      if (stored) return stored;
-    }
   }
+
+  await hydrateStoredMatchDetails(fixtureId, { force: false });
+  const stored = await findStoredMatchById(fixtureId);
+  if (stored) return stored;
 
   return findStoredMatchById(fixtureId);
 };
@@ -892,9 +1030,9 @@ const mapEventResponse = (event) => ({
 });
 
 const getMatchEvents = async (fixtureId) => {
-  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ events: 1 }).lean();
-  if (Array.isArray(stored?.events) && stored.events.length > 0) {
-    return stored.events.map((event) => ({
+  const hydrated = await hydrateStoredMatchDetails(fixtureId, { force: false });
+  if (Array.isArray(hydrated?.events) && hydrated.events.length > 0) {
+    return hydrated.events.map((event) => ({
       id: event?.eventId || `${event?.minute || 0}-${event?.teamId || 0}-${event?.playerId || 0}-${event?.type || "event"}`,
       minute: event?.minute ?? null,
       extraMinute: event?.extraMinute ?? null,
@@ -917,18 +1055,7 @@ const getMatchEvents = async (fixtureId) => {
     }));
   }
 
-  const events = await fetchFixtureEvents(fixtureId);
-  const mapped = events.map(mapEventResponse);
-
-  if (mapped.length > 0) {
-    await Match.findOneAndUpdate(
-      buildMatchQueryById(fixtureId),
-      { $set: { events: mapped.map(mapEventForStorage), updatedAt: new Date() } },
-      { new: false }
-    );
-  }
-
-  return mapped;
+  return [];
 };
 
 const mapStatistics = (teamStats) => ({
@@ -946,23 +1073,8 @@ const mapStatistics = (teamStats) => ({
 });
 
 const getMatchStatistics = async (fixtureId) => {
-  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ statistics: 1 }).lean();
-  if (Array.isArray(stored?.statistics) && stored.statistics.length > 0) {
-    return stored.statistics;
-  }
-
-  const statistics = await fetchFixtureStatistics(fixtureId);
-  const mapped = statistics.map(mapStatistics);
-
-  if (mapped.length > 0) {
-    await Match.findOneAndUpdate(
-      buildMatchQueryById(fixtureId),
-      { $set: { statistics: mapped, updatedAt: new Date() } },
-      { new: false }
-    );
-  }
-
-  return mapped;
+  const hydrated = await hydrateStoredMatchDetails(fixtureId, { force: false });
+  return Array.isArray(hydrated?.statistics) ? hydrated.statistics : [];
 };
 
 const mapLineupPlayers = (items = []) => items.map((entry) => ({
@@ -991,23 +1103,8 @@ const mapLineup = (lineup) => ({
 });
 
 const getMatchLineups = async (fixtureId) => {
-  const stored = await Match.findOne(buildMatchQueryById(fixtureId)).select({ lineups: 1 }).lean();
-  if (Array.isArray(stored?.lineups) && stored.lineups.length > 0) {
-    return stored.lineups;
-  }
-
-  const lineups = await fetchFixtureLineups(fixtureId);
-  const mapped = lineups.map(mapLineup);
-
-  if (mapped.length > 0) {
-    await Match.findOneAndUpdate(
-      buildMatchQueryById(fixtureId),
-      { $set: { lineups: mapped, updatedAt: new Date() } },
-      { new: false }
-    );
-  }
-
-  return mapped;
+  const hydrated = await hydrateStoredMatchDetails(fixtureId, { force: false });
+  return Array.isArray(hydrated?.lineups) ? hydrated.lineups : [];
 };
 
 const resolveLeagueIdByName = (leagueName) => {

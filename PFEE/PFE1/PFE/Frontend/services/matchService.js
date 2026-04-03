@@ -8,9 +8,53 @@ const loggedErrors = new Set();
 const readJsonSafely = async (response) => {
   try {
     return await response.json();
-  } catch (error) {
+  } catch (_error) {
     return null;
   }
+};
+
+const normalizeMatchEvents = (events) => {
+  if (!Array.isArray(events)) return [];
+
+  return events.map((event) => ({
+    id: event?.id || event?.eventId || `${event?.minute || 0}-${event?.teamId || event?.team?.id || 0}-${event?.playerId || event?.player?.id || 0}-${event?.type || 'event'}`,
+    minute: event?.minute ?? null,
+    extraMinute: event?.extraMinute ?? null,
+    team: {
+      id: event?.team?.id ?? event?.teamId ?? null,
+      name: event?.team?.name || event?.teamName || null,
+      logo: event?.team?.logo || null,
+    },
+    player: {
+      id: event?.player?.id ?? event?.playerId ?? null,
+      name: event?.player?.name || event?.playerName || null,
+    },
+    assist: {
+      id: event?.assist?.id ?? event?.assistId ?? null,
+      name: event?.assist?.name || event?.assistName || null,
+    },
+    type: event?.type || null,
+    detail: event?.detail || null,
+    comments: event?.comments || null,
+  }));
+};
+
+const normalizeStatisticsPayload = (statistics) => {
+  if (!Array.isArray(statistics)) return [];
+
+  return statistics.map((teamStats) => ({
+    team: {
+      id: teamStats?.team?.id ?? null,
+      name: teamStats?.team?.name || null,
+      logo: teamStats?.team?.logo || null,
+    },
+    statistics: Array.isArray(teamStats?.statistics)
+      ? teamStats.statistics.map((stat) => ({
+          type: stat?.type || null,
+          value: stat?.value ?? null,
+        }))
+      : [],
+  }));
 };
 
 const fetchJson = async (url, options, scope) => {
@@ -89,6 +133,24 @@ const normalizeLineupsPayload = (payload) => {
   }));
 };
 
+const normalizeMatchPayload = (match) => {
+  if (!match) return null;
+
+  return {
+    ...match,
+    matchId: match?.matchId ?? match?.apiMatchId ?? match?.fixtureId ?? null,
+    apiMatchId: match?.apiMatchId ?? match?.matchId ?? match?.fixtureId ?? null,
+    fixtureId: match?.fixtureId ?? match?.matchId ?? match?.apiMatchId ?? null,
+    score: match?.score || match?.goals || { home: null, away: null },
+    goals: match?.goals || match?.score || { home: null, away: null },
+    homeScore: match?.homeScore ?? match?.score?.home ?? match?.goals?.home ?? null,
+    awayScore: match?.awayScore ?? match?.score?.away ?? match?.goals?.away ?? null,
+    events: normalizeMatchEvents(match?.events),
+    statistics: normalizeStatisticsPayload(match?.statistics),
+    lineups: normalizeLineupsPayload({ lineups: match?.lineups }),
+  };
+};
+
 const logRequestError = (scope, error) => {
   const message = String(error?.message || error || 'unknown error');
   const dedupeKey = `${scope}:${message}`;
@@ -128,11 +190,9 @@ export const matchService = {
 
   getMatchesByLeague: async (league) => {
     try {
-      const response = await fetch(`${API_URL}/league/${encodeURIComponent(league)}`);
-      const data = await response.json();
-      return data.matches || [];
-    } catch (error) {
-      logRequestError('getMatchesByLeague', error);
+      const data = await fetchJson(`${API_URL}/league/${encodeURIComponent(league)}`, undefined, 'getMatchesByLeague');
+      return Array.isArray(data?.matches) ? data.matches.map(normalizeMatchPayload).filter(Boolean) : [];
+    } catch (_error) {
       return [];
     }
   },
@@ -153,128 +213,104 @@ export const matchService = {
         params.set('season', String(season));
       }
 
-      const response = await fetch(`${API_URL}/standings?${params.toString()}`);
-      const data = await response.json();
-      return data.standings || [];
-    } catch (error) {
-      logRequestError('getLeagueStandings', error);
+      const data = await fetchJson(`${API_URL}/standings?${params.toString()}`, undefined, 'getLeagueStandings');
+      return Array.isArray(data?.standings) ? data.standings : [];
+    } catch (_error) {
       return [];
     }
   },
 
   getLiveMatches: async () => {
     try {
-      const response = await fetch(`${API_URL}/live`);
-      const data = await response.json();
-      return data.matches || [];
-    } catch (error) {
-      logRequestError('getLiveMatches', error);
+      const data = await fetchJson(`${API_URL}/live`, undefined, 'getLiveMatches');
+      return Array.isArray(data?.matches) ? data.matches.map(normalizeMatchPayload).filter(Boolean) : [];
+    } catch (_error) {
       return [];
     }
   },
 
   getMatchesByDate: async (date) => {
     try {
-      const response = await fetch(`${API_URL}/by-date?date=${encodeURIComponent(date)}`);
-      const data = await response.json();
-      return data.matches || [];
-    } catch (error) {
-      logRequestError('getMatchesByDate', error);
+      const data = await fetchJson(`${API_URL}/by-date?date=${encodeURIComponent(date)}`, undefined, 'getMatchesByDate');
+      return Array.isArray(data?.matches) ? data.matches.map(normalizeMatchPayload).filter(Boolean) : [];
+    } catch (_error) {
       return [];
     }
   },
 
   getMatchById: async (matchId) => {
     try {
-      const response = await fetch(`${API_URL}/${matchId}`);
-      const data = await response.json();
-      return data.match || null;
-    } catch (error) {
-      logRequestError('getMatchById', error);
+      const data = await fetchJson(`${API_URL}/${matchId}`, undefined, 'getMatchById');
+      return normalizeMatchPayload(data?.match || null);
+    } catch (_error) {
       return null;
     }
   },
 
   getMatchEvents: async (matchId) => {
     try {
-      const response = await fetch(`${API_URL}/${matchId}/events`);
-      const data = await response.json();
-      return data.events || [];
-    } catch (error) {
-      logRequestError('getMatchEvents', error);
+      const data = await fetchJson(`${API_URL}/${matchId}/events`, undefined, 'getMatchEvents');
+      return normalizeMatchEvents(data?.events);
+    } catch (_error) {
       return [];
     }
   },
 
   getMatchStatistics: async (matchId) => {
     try {
-      const response = await fetch(`${API_URL}/${matchId}/statistics`);
-      const data = await response.json();
-      return data.statistics || [];
-    } catch (error) {
-      logRequestError('getMatchStatistics', error);
+      const data = await fetchJson(`${API_URL}/${matchId}/statistics`, undefined, 'getMatchStatistics');
+      return normalizeStatisticsPayload(data?.statistics);
+    } catch (_error) {
       return [];
     }
   },
 
   getMatchLineups: async (matchId) => {
     try {
-      const response = await fetch(`${API_URL}/${matchId}/lineups`);
-      const data = await response.json();
+      const data = await fetchJson(`${API_URL}/${matchId}/lineups`, undefined, 'getMatchLineups');
       return normalizeLineupsPayload(data);
-    } catch (error) {
-      logRequestError('getMatchLineups', error);
+    } catch (_error) {
       return [];
     }
   },
 
   getSupportedLeagues: async () => {
     try {
-      const response = await fetch(`${API_URL}/import/leagues`);
-      const data = await response.json();
-      return data.leagues || [];
-    } catch (error) {
-      logRequestError('getSupportedLeagues', error);
+      const data = await fetchJson(`${API_URL}/import/leagues`, undefined, 'getSupportedLeagues');
+      return Array.isArray(data?.leagues) ? data.leagues : [];
+    } catch (_error) {
       return [];
     }
   },
 
   importAllMatches: async () => {
     try {
-      const response = await fetch(`${API_URL}/import/all`, { method: 'POST' });
-      return await response.json();
+      return await fetchJson(`${API_URL}/import/all`, { method: 'POST' }, 'importAllMatches');
     } catch (error) {
-      logRequestError('importAllMatches', error);
       return { success: false, message: error.message };
     }
   },
 
   importLeague: async (leagueCode) => {
     try {
-      const response = await fetch(`${API_URL}/import/${leagueCode}`, { method: 'POST' });
-      return await response.json();
+      return await fetchJson(`${API_URL}/import/${leagueCode}`, { method: 'POST' }, 'importLeague');
     } catch (error) {
-      logRequestError('importLeague', error);
       return { success: false, message: error.message };
     }
   },
 
   importMatchDetails: async (matchId) => {
     try {
-      const response = await fetch(`${API_URL}/${matchId}/import/details`, { method: 'POST' });
-      return await response.json();
+      return await fetchJson(`${API_URL}/${matchId}/import/details`, { method: 'POST' }, 'importMatchDetails');
     } catch (error) {
-      logRequestError('importMatchDetails', error);
       return { success: false, message: error.message };
     }
   },
 
   getProviderStatus: async () => {
     try {
-      const response = await fetch(`${API_URL}/provider/status`);
-      return await response.json();
-    } catch (error) {
-      logRequestError('getProviderStatus', error);
+      return await fetchJson(`${API_URL}/provider/status`, undefined, 'getProviderStatus');
+    } catch (_error) {
       return { provider: 'api-sports', blocked: false, blockedUntil: null, lastError: null };
     }
   },

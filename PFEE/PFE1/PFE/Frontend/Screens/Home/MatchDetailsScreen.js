@@ -42,17 +42,23 @@ const EVENT_ICON_BY_TYPE = {
 };
 
 const normalize = (value) => String(value || '').trim();
+const normalizeLoose = (value) => normalize(value)
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-zA-Z0-9]+/g, ' ')
+  .trim()
+  .toLowerCase();
 
 const normalizeStatName = (value) => {
-  const raw = normalize(value).toLowerCase();
+  const raw = normalizeLoose(value);
 
-  if (raw === 'expected goals' || raw === 'xg') return 'Expected Goals';
-  if (raw === 'ball possession' || raw === 'possession') return 'Ball Possession';
+  if (raw === 'expected goals' || raw === 'expected goals %' || raw === 'xg' || raw === 'expected goals xg' || raw === 'expected_goals') return 'Expected Goals';
+  if (raw === 'ball possession' || raw === 'possession' || raw === 'possession %') return 'Ball Possession';
   if (raw === 'total shots') return 'Total Shots';
   if (raw === 'shots on goal' || raw === 'shots on target') return 'Shots on Goal';
   if (raw === 'big chances') return 'Big Chances';
   if (raw === 'corner kicks' || raw === 'corners') return 'Corner Kicks';
-  if (raw === 'passes %' || raw === 'passes accurate' || raw === 'pass accuracy') return 'Passes %';
+  if (raw === 'passes %' || raw === 'passes accurate' || raw === 'pass accuracy' || raw === 'accurate passes' || raw === 'accurate passes %') return 'Passes %';
   if (raw === 'fouls') return 'Fouls';
 
   return value;
@@ -173,16 +179,51 @@ const getEventSortValue = (event) => {
   return (Number.isFinite(minute) ? minute : 0) * 100 + (Number.isFinite(extraMinute) ? extraMinute : 0);
 };
 
+const getNameVariants = (value) => {
+  const compact = normalizeLoose(value).replace(/\s+/g, '');
+  const tokens = normalizeLoose(value).split(/\s+/).filter(Boolean);
+  const variants = new Set();
+
+  if (compact) {
+    variants.add(compact);
+  }
+
+  if (tokens.length > 0) {
+    variants.add(tokens[tokens.length - 1]);
+  }
+
+  if (tokens.length > 1) {
+    variants.add(`${tokens[0][0]}${tokens[tokens.length - 1]}`);
+  }
+
+  return [...variants].filter(Boolean);
+};
+
+const resolveTeamSide = (event, match) => {
+  const eventTeamId = Number(event?.team?.id ?? event?.teamId);
+  const homeTeamId = Number(match?.homeTeamId);
+  const awayTeamId = Number(match?.awayTeamId);
+
+  if (Number.isInteger(eventTeamId)) {
+    if (Number.isInteger(homeTeamId) && eventTeamId === homeTeamId) return 'home';
+    if (Number.isInteger(awayTeamId) && eventTeamId === awayTeamId) return 'away';
+  }
+
+  const teamName = normalizeLoose(event?.team?.name || event?.teamName);
+  const homeTeam = normalizeLoose(match?.homeTeam);
+  const awayTeam = normalizeLoose(match?.awayTeam);
+
+  if (teamName && homeTeam && teamName === homeTeam) return 'home';
+  if (teamName && awayTeam && teamName === awayTeam) return 'away';
+  return null;
+};
+
 const isHomeEvent = (event, match) => {
-  const teamName = String(event?.team?.name || event?.teamName || '').trim().toLowerCase();
-  const homeTeam = String(match?.homeTeam || '').trim().toLowerCase();
-  return Boolean(teamName && homeTeam && teamName === homeTeam);
+  return resolveTeamSide(event, match) === 'home';
 };
 
 const isAwayEvent = (event, match) => {
-  const teamName = String(event?.team?.name || event?.teamName || '').trim().toLowerCase();
-  const awayTeam = String(match?.awayTeam || '').trim().toLowerCase();
-  return Boolean(teamName && awayTeam && teamName === awayTeam);
+  return resolveTeamSide(event, match) === 'away';
 };
 
 const buildTimelineEvents = (events, match) => {
@@ -238,6 +279,35 @@ const buildFallbackSummaryItems = (match) => {
   return items;
 };
 
+const hasBundleDetails = ({ matchData, eventData, statData, lineupData }) => (
+  (Array.isArray(matchData?.events) && matchData.events.length > 0) ||
+  (Array.isArray(matchData?.statistics) && matchData.statistics.length > 0) ||
+  (Array.isArray(matchData?.lineups) && matchData.lineups.length > 0) ||
+  (Array.isArray(eventData) && eventData.length > 0) ||
+  (Array.isArray(statData) && statData.length > 0) ||
+  (Array.isArray(lineupData) && lineupData.length > 0)
+);
+
+const loadMatchBundleOnce = async (matchId) => {
+  const [matchResult, eventResult, statResult, lineupResult, providerResult] = await Promise.allSettled([
+    matchService.getMatchById(matchId),
+    matchService.getMatchEvents(matchId),
+    matchService.getMatchStatistics(matchId),
+    matchService.getMatchLineups(matchId),
+    matchService.getProviderStatus(),
+  ]);
+
+  return {
+    matchData: matchResult.status === 'fulfilled' ? matchResult.value : null,
+    eventData: eventResult.status === 'fulfilled' ? eventResult.value : [],
+    statData: statResult.status === 'fulfilled' ? statResult.value : [],
+    lineupData: lineupResult.status === 'fulfilled' ? lineupResult.value : [],
+    providerStatus: providerResult.status === 'fulfilled'
+      ? providerResult.value
+      : { blocked: false, blockedUntil: null, lastError: null },
+  };
+};
+
 const fetchMatchBundle = async (matchId, forceImport = false) => {
   if (!matchId) {
     return {
@@ -253,40 +323,47 @@ const fetchMatchBundle = async (matchId, forceImport = false) => {
     await matchService.importMatchDetails(matchId);
   }
 
-  const [matchData, eventData, statData, lineupData] = await Promise.all([
-    matchService.getMatchById(matchId),
-    matchService.getMatchEvents(matchId),
-    matchService.getMatchStatistics(matchId),
-    matchService.getMatchLineups(matchId),
-  ]);
-  const providerStatus = await matchService.getProviderStatus();
+  const bundle = await loadMatchBundleOnce(matchId);
 
-  return {
-    matchData,
-    eventData,
-    statData,
-    lineupData,
-    providerStatus,
-  };
+  if (!forceImport && !bundle.providerStatus?.blocked && !hasBundleDetails(bundle)) {
+    const importResult = await matchService.importMatchDetails(matchId).catch(() => null);
+    const importedSomething = (importResult?.success === true) || (
+      (importResult?.imported?.events || 0) +
+      (importResult?.imported?.statisticsTeams || 0) +
+      (importResult?.imported?.lineupsTeams || 0)
+    ) > 0;
+
+    if (importedSomething || !bundle.providerStatus?.lastError) {
+      return loadMatchBundleOnce(matchId);
+    }
+  }
+
+  return bundle;
 };
 
 const buildPlayerRows = (lineups, events) => {
   const players = [];
 
   lineups.forEach((lineup, teamIndex) => {
+    const teamId = Number(lineup?.team?.id);
     const teamName = lineup?.team?.name || `Equipe ${teamIndex + 1}`;
     const teamLogo = lineup?.team?.logo || null;
+    const teamNameKey = normalizeLoose(teamName);
     const starters = Array.isArray(lineup?.startingXI) ? lineup.startingXI : Array.isArray(lineup?.startXI) ? lineup.startXI : [];
     const bench = Array.isArray(lineup?.substitutes) ? lineup.substitutes : Array.isArray(lineup?.bench) ? lineup.bench : [];
 
     starters.forEach((entry, index) => {
       const player = entry?.player || entry || {};
+      const playerId = Number(player?.id);
       players.push({
         id: `start-${teamName}-${player?.id || player?.name || index}`,
+        playerId: Number.isInteger(playerId) ? playerId : null,
         name: player?.name || 'Joueur',
         number: player?.number,
         position: player?.position || player?.pos || '-',
+        teamId: Number.isInteger(teamId) ? teamId : null,
         teamName,
+        teamNameKey,
         teamLogo,
         impact: 1,
         cards: 0,
@@ -296,12 +373,16 @@ const buildPlayerRows = (lineups, events) => {
 
     bench.forEach((entry, index) => {
       const player = entry?.player || entry || {};
+      const playerId = Number(player?.id);
       players.push({
         id: `sub-${teamName}-${player?.id || player?.name || index}`,
+        playerId: Number.isInteger(playerId) ? playerId : null,
         name: player?.name || 'Joueur',
         number: player?.number,
         position: player?.position || player?.pos || '-',
+        teamId: Number.isInteger(teamId) ? teamId : null,
         teamName,
+        teamNameKey,
         teamLogo,
         impact: 0,
         cards: 0,
@@ -311,19 +392,60 @@ const buildPlayerRows = (lineups, events) => {
   });
 
   const byName = new Map();
+  const byPlayerId = new Map();
+  const byVariant = new Map();
+
   players.forEach((player) => {
-    const key = `${String(player.teamName || '').toLowerCase()}-${String(player.name || '').toLowerCase()}`;
+    const key = `${normalizeLoose(player.teamName)}-${normalizeLoose(player.name)}`;
     if (!key.trim() || key.endsWith('-')) {
       return;
     }
+
     byName.set(key, player);
+
+    if (Number.isInteger(player.playerId)) {
+      byPlayerId.set(player.playerId, player);
+    }
+
+    getNameVariants(player.name).forEach((variant) => {
+      const teamVariantKey = `${player.teamId ?? player.teamNameKey}:${variant}`;
+      const fallbackVariantKey = `*:${variant}`;
+
+      if (!byVariant.has(teamVariantKey)) {
+        byVariant.set(teamVariantKey, player);
+      }
+
+      if (!byVariant.has(fallbackVariantKey)) {
+        byVariant.set(fallbackVariantKey, player);
+      } else if (byVariant.get(fallbackVariantKey) !== player) {
+        byVariant.set(fallbackVariantKey, null);
+      }
+    });
   });
 
   (events || []).forEach((event) => {
-    const eventPlayer = normalize(event?.player?.name || event?.playerName).toLowerCase();
-    if (!eventPlayer) return;
+    const eventPlayerId = Number(event?.player?.id ?? event?.playerId);
+    const eventTeamId = Number(event?.team?.id ?? event?.teamId);
+    const eventTeamKey = normalizeLoose(event?.team?.name || event?.teamName);
+    const eventPlayerName = event?.player?.name || event?.playerName;
 
-    const row = [...byName.values()].find((item) => String(item.name || '').toLowerCase() === eventPlayer);
+    let row = Number.isInteger(eventPlayerId) ? byPlayerId.get(eventPlayerId) : null;
+
+    if (!row) {
+      const variants = getNameVariants(eventPlayerName);
+      row = variants
+        .map((variant) => (
+          byVariant.get(`${Number.isInteger(eventTeamId) ? eventTeamId : eventTeamKey}:${variant}`) ||
+          byVariant.get(`*:${variant}`)
+        ))
+        .find(Boolean);
+    }
+
+    if (!row && eventPlayerName) {
+      const fallbackKey = `${eventTeamKey}-${normalizeLoose(eventPlayerName)}`;
+      row = byName.get(fallbackKey) || null;
+    }
+
     if (!row) return;
 
     if (event?.type === 'Goal') {
@@ -348,11 +470,33 @@ const buildPlayerRows = (lineups, events) => {
     .slice(0, 12);
 };
 
-const buildStatRows = (statistics) => {
+const findTeamStats = (statistics, teamId, teamName) => {
+  if (!Array.isArray(statistics)) return null;
+
+  const safeTeamId = Number(teamId);
+  const normalizedTeamName = normalizeLoose(teamName);
+
+  if (Number.isInteger(safeTeamId)) {
+    const byId = statistics.find((entry) => Number(entry?.team?.id) === safeTeamId);
+    if (byId) return byId;
+  }
+
+  if (normalizedTeamName) {
+    return statistics.find((entry) => normalizeLoose(entry?.team?.name) === normalizedTeamName) || null;
+  }
+
+  return null;
+};
+
+const buildStatRows = (statistics, match) => {
   if (!Array.isArray(statistics) || statistics.length < 2) return [];
 
-  const homeStats = statistics[0]?.statistics || [];
-  const awayStats = statistics[1]?.statistics || [];
+  const homeEntry = findTeamStats(statistics, match?.homeTeamId, match?.homeTeam) || statistics[0];
+  const awayEntry = findTeamStats(statistics, match?.awayTeamId, match?.awayTeam)
+    || statistics.find((entry) => entry !== homeEntry)
+    || statistics[1];
+  const homeStats = homeEntry?.statistics || [];
+  const awayStats = awayEntry?.statistics || [];
 
   const homeMap = new Map();
   const awayMap = new Map();
@@ -392,7 +536,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
   const [events, setEvents] = useState(Array.isArray(initialMatch?.events) ? initialMatch.events : []);
   const [statistics, setStatistics] = useState(Array.isArray(initialMatch?.statistics) ? initialMatch.statistics : []);
   const [lineups, setLineups] = useState(Array.isArray(initialMatch?.lineups) ? initialMatch.lineups : []);
-  const [loading, setLoading] = useState(Boolean(initialMatch));
+  const [loading, setLoading] = useState(!initialMatch);
   const [activeTab, setActiveTab] = useState('summary');
   const [providerBlocked, setProviderBlocked] = useState(false);
   const [providerBlockedUntil, setProviderBlockedUntil] = useState(null);
@@ -446,7 +590,9 @@ export default function MatchDetailsScreen({ route, navigation }) {
       }
 
       try {
-        setLoading(true);
+        if (!initialMatch) {
+          setLoading(true);
+        }
         const bundle = await fetchMatchBundle(matchId);
 
         if (!mounted) return;
@@ -463,7 +609,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
     return () => {
       mounted = false;
     };
-  }, [matchId]);
+  }, [initialMatch, matchId]);
 
   const phase = getMatchPhase(match);
   const badge = getStatusBadge(phase, styles);
@@ -489,7 +635,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
     return `${league}${round}`;
   }, [match?.country, match?.league, match?.round]);
 
-  const statRows = useMemo(() => buildStatRows(statistics), [statistics]);
+  const statRows = useMemo(() => buildStatRows(statistics, match), [statistics, match]);
   const playerRows = useMemo(() => buildPlayerRows(lineups, events), [lineups, events]);
   const fallbackSummaryItems = useMemo(() => buildFallbackSummaryItems(match), [match]);
   const timelineEvents = useMemo(() => buildTimelineEvents(events, match), [events, match]);
