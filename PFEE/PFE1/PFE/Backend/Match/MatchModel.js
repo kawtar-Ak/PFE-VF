@@ -159,6 +159,10 @@ const MatchSchema = new mongoose.Schema({
     type: [mongoose.Schema.Types.Mixed],
     default: []
   },
+  players: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: []
+  },
   updatedAt: {
     type: Date,
     default: Date.now

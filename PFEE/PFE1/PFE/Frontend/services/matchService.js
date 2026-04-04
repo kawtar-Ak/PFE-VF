@@ -133,6 +133,87 @@ const normalizeLineupsPayload = (payload) => {
   }));
 };
 
+const normalizePlayerStatsPayload = (payload) => {
+  const teams = Array.isArray(payload?.players)
+    ? payload.players
+    : Array.isArray(payload?.response)
+      ? payload.response
+      : [];
+
+  return teams.map((teamEntry) => ({
+    team: {
+      id: teamEntry?.team?.id ?? null,
+      name: teamEntry?.team?.name || null,
+      logo: teamEntry?.team?.logo || null,
+      colors: teamEntry?.team?.colors || null,
+    },
+    players: Array.isArray(teamEntry?.players)
+      ? teamEntry.players.map((entry) => ({
+          player: {
+            id: entry?.player?.id ?? null,
+            name: entry?.player?.name || null,
+            photo: entry?.player?.photo || null,
+          },
+          statistics: {
+            games: {
+              minutes: entry?.statistics?.games?.minutes ?? null,
+              number: entry?.statistics?.games?.number ?? null,
+              position: entry?.statistics?.games?.position || null,
+              rating: entry?.statistics?.games?.rating ?? null,
+              captain: entry?.statistics?.games?.captain ?? false,
+              substitute: entry?.statistics?.games?.substitute ?? false,
+            },
+            offsides: entry?.statistics?.offsides ?? null,
+            shots: {
+              total: entry?.statistics?.shots?.total ?? null,
+              on: entry?.statistics?.shots?.on ?? null,
+            },
+            goals: {
+              total: entry?.statistics?.goals?.total ?? null,
+              conceded: entry?.statistics?.goals?.conceded ?? null,
+              assists: entry?.statistics?.goals?.assists ?? null,
+              saves: entry?.statistics?.goals?.saves ?? null,
+            },
+            passes: {
+              total: entry?.statistics?.passes?.total ?? null,
+              key: entry?.statistics?.passes?.key ?? null,
+              accuracy: entry?.statistics?.passes?.accuracy ?? null,
+            },
+            tackles: {
+              total: entry?.statistics?.tackles?.total ?? null,
+              blocks: entry?.statistics?.tackles?.blocks ?? null,
+              interceptions: entry?.statistics?.tackles?.interceptions ?? null,
+            },
+            duels: {
+              total: entry?.statistics?.duels?.total ?? null,
+              won: entry?.statistics?.duels?.won ?? null,
+            },
+            dribbles: {
+              attempts: entry?.statistics?.dribbles?.attempts ?? null,
+              success: entry?.statistics?.dribbles?.success ?? null,
+              past: entry?.statistics?.dribbles?.past ?? null,
+            },
+            fouls: {
+              drawn: entry?.statistics?.fouls?.drawn ?? null,
+              committed: entry?.statistics?.fouls?.committed ?? null,
+            },
+            cards: {
+              yellow: entry?.statistics?.cards?.yellow ?? null,
+              red: entry?.statistics?.cards?.red ?? null,
+            },
+            penalty: {
+              won: entry?.statistics?.penalty?.won ?? null,
+              committed: entry?.statistics?.penalty?.committed ?? entry?.statistics?.penalty?.commited ?? null,
+              scored: entry?.statistics?.penalty?.scored ?? null,
+              missed: entry?.statistics?.penalty?.missed ?? null,
+              saved: entry?.statistics?.penalty?.saved ?? null,
+            },
+          },
+        }))
+      : [],
+  }));
+};
+
 const normalizeMatchPayload = (match) => {
   if (!match) return null;
 
@@ -148,6 +229,7 @@ const normalizeMatchPayload = (match) => {
     events: normalizeMatchEvents(match?.events),
     statistics: normalizeStatisticsPayload(match?.statistics),
     lineups: normalizeLineupsPayload({ lineups: match?.lineups }),
+    players: normalizePlayerStatsPayload({ players: match?.players }),
   };
 };
 
@@ -223,9 +305,20 @@ export const matchService = {
   getLiveMatches: async () => {
     try {
       const data = await fetchJson(`${API_URL}/live`, undefined, 'getLiveMatches');
-      return Array.isArray(data?.matches) ? data.matches.map(normalizeMatchPayload).filter(Boolean) : [];
+      const liveMatches = Array.isArray(data?.matches) ? data.matches.map(normalizeMatchPayload).filter(Boolean) : [];
+      if (liveMatches.length > 0) {
+        return liveMatches;
+      }
+
+      const fallback = await matchService.getAllMatchesState();
+      return Array.isArray(fallback?.matches)
+        ? fallback.matches.map(normalizeMatchPayload).filter((match) => String(match?.status || '').toLowerCase() === 'live')
+        : [];
     } catch (_error) {
-      return [];
+      const fallback = await matchService.getAllMatchesState().catch(() => ({ matches: [] }));
+      return Array.isArray(fallback?.matches)
+        ? fallback.matches.map(normalizeMatchPayload).filter((match) => String(match?.status || '').toLowerCase() === 'live')
+        : [];
     }
   },
 
@@ -269,6 +362,15 @@ export const matchService = {
     try {
       const data = await fetchJson(`${API_URL}/${matchId}/lineups`, undefined, 'getMatchLineups');
       return normalizeLineupsPayload(data);
+    } catch (_error) {
+      return [];
+    }
+  },
+
+  getMatchPlayers: async (matchId) => {
+    try {
+      const data = await fetchJson(`${API_URL}/${matchId}/players`, undefined, 'getMatchPlayers');
+      return normalizePlayerStatsPayload(data);
     } catch (_error) {
       return [];
     }

@@ -260,6 +260,12 @@ const getMatchTimeLabel = (match) => {
   return statusShort || '-';
 };
 
+const hasVisibleScore = (match) => {
+  const homeScore = Number(match?.homeScore ?? match?.score?.home);
+  const awayScore = Number(match?.awayScore ?? match?.score?.away);
+  return (Number.isFinite(homeScore) && homeScore > 0) || (Number.isFinite(awayScore) && awayScore > 0);
+};
+
 const buildFallbackSummaryItems = (match) => {
   const items = [];
 
@@ -279,33 +285,70 @@ const buildFallbackSummaryItems = (match) => {
   return items;
 };
 
-const hasBundleDetails = ({ matchData, eventData, statData, lineupData }) => (
+const hasBundleDetails = ({ matchData, eventData, statData, lineupData, playerData }) => (
   (Array.isArray(matchData?.events) && matchData.events.length > 0) ||
   (Array.isArray(matchData?.statistics) && matchData.statistics.length > 0) ||
   (Array.isArray(matchData?.lineups) && matchData.lineups.length > 0) ||
+  (Array.isArray(matchData?.players) && matchData.players.length > 0) ||
   (Array.isArray(eventData) && eventData.length > 0) ||
   (Array.isArray(statData) && statData.length > 0) ||
-  (Array.isArray(lineupData) && lineupData.length > 0)
+  (Array.isArray(lineupData) && lineupData.length > 0) ||
+  (Array.isArray(playerData) && playerData.length > 0)
 );
 
 const loadMatchBundleOnce = async (matchId) => {
-  const [matchResult, eventResult, statResult, lineupResult, providerResult] = await Promise.allSettled([
+  const [matchResult, providerResult] = await Promise.allSettled([
     matchService.getMatchById(matchId),
-    matchService.getMatchEvents(matchId),
-    matchService.getMatchStatistics(matchId),
-    matchService.getMatchLineups(matchId),
     matchService.getProviderStatus(),
   ]);
 
-  return {
-    matchData: matchResult.status === 'fulfilled' ? matchResult.value : null,
-    eventData: eventResult.status === 'fulfilled' ? eventResult.value : [],
-    statData: statResult.status === 'fulfilled' ? statResult.value : [],
-    lineupData: lineupResult.status === 'fulfilled' ? lineupResult.value : [],
+  const matchData = matchResult.status === 'fulfilled' ? matchResult.value : null;
+  const bundle = {
+    matchData,
+    eventData: Array.isArray(matchData?.events) ? matchData.events : [],
+    statData: Array.isArray(matchData?.statistics) ? matchData.statistics : [],
+    lineupData: Array.isArray(matchData?.lineups) ? matchData.lineups : [],
+    playerData: Array.isArray(matchData?.players) ? matchData.players : [],
     providerStatus: providerResult.status === 'fulfilled'
       ? providerResult.value
       : { blocked: false, blockedUntil: null, lastError: null },
   };
+
+  const followUpRequests = [];
+
+  if (bundle.eventData.length === 0) {
+    followUpRequests.push(
+      matchService.getMatchEvents(matchId).then((value) => ({ key: 'eventData', value }))
+    );
+  }
+
+  if (bundle.statData.length === 0) {
+    followUpRequests.push(
+      matchService.getMatchStatistics(matchId).then((value) => ({ key: 'statData', value }))
+    );
+  }
+
+  if (bundle.lineupData.length === 0) {
+    followUpRequests.push(
+      matchService.getMatchLineups(matchId).then((value) => ({ key: 'lineupData', value }))
+    );
+  }
+
+  if (bundle.playerData.length === 0) {
+    followUpRequests.push(
+      matchService.getMatchPlayers(matchId).then((value) => ({ key: 'playerData', value }))
+    );
+  }
+
+  if (followUpRequests.length > 0) {
+    const followUpResults = await Promise.allSettled(followUpRequests);
+    followUpResults.forEach((result) => {
+      if (result.status !== 'fulfilled') return;
+      bundle[result.value.key] = Array.isArray(result.value.value) ? result.value.value : [];
+    });
+  }
+
+  return bundle;
 };
 
 const fetchMatchBundle = async (matchId, forceImport = false) => {
@@ -315,6 +358,7 @@ const fetchMatchBundle = async (matchId, forceImport = false) => {
       eventData: [],
       statData: [],
       lineupData: [],
+      playerData: [],
       providerStatus: { blocked: false, blockedUntil: null },
     };
   }
@@ -330,7 +374,8 @@ const fetchMatchBundle = async (matchId, forceImport = false) => {
     const importedSomething = (importResult?.success === true) || (
       (importResult?.imported?.events || 0) +
       (importResult?.imported?.statisticsTeams || 0) +
-      (importResult?.imported?.lineupsTeams || 0)
+      (importResult?.imported?.lineupsTeams || 0) +
+      (importResult?.imported?.playerTeams || 0)
     ) > 0;
 
     if (importedSomething || !bundle.providerStatus?.lastError) {
@@ -339,6 +384,133 @@ const fetchMatchBundle = async (matchId, forceImport = false) => {
   }
 
   return bundle;
+};
+
+const buildPlayerRowsFromApi = (playerStats) => {
+  if (!Array.isArray(playerStats) || playerStats.length === 0) {
+    return [];
+  }
+
+  const rows = [];
+
+  playerStats.forEach((teamEntry, teamIndex) => {
+    const teamName = teamEntry?.team?.name || `Equipe ${teamIndex + 1}`;
+    const teamLogo = teamEntry?.team?.logo || null;
+
+    (teamEntry?.players || []).forEach((entry, playerIndex) => {
+      const minutes = Number(entry?.statistics?.games?.minutes ?? 0) || 0;
+      const ratingRaw = entry?.statistics?.games?.rating;
+      const rating = parseStatNumber(ratingRaw);
+      const goals = Number(entry?.statistics?.goals?.total ?? 0) || 0;
+      const assists = Number(entry?.statistics?.goals?.assists ?? 0) || 0;
+      const shotsOn = Number(entry?.statistics?.shots?.on ?? 0) || 0;
+      const keyPasses = Number(entry?.statistics?.passes?.key ?? 0) || 0;
+      const yellow = Number(entry?.statistics?.cards?.yellow ?? 0) || 0;
+      const red = Number(entry?.statistics?.cards?.red ?? 0) || 0;
+      const sortScore = rating > 0
+        ? rating * 100 + goals * 15 + assists * 10 + keyPasses + shotsOn
+        : goals * 20 + assists * 12 + keyPasses * 2 + shotsOn + minutes / 10 - yellow * 2 - red * 5;
+
+      rows.push({
+        id: `${teamName}-${entry?.player?.id || entry?.player?.name || playerIndex}`,
+        name: entry?.player?.name || 'Joueur',
+        position: entry?.statistics?.games?.position || '-',
+        teamName,
+        teamLogo,
+        minutes,
+        goals,
+        assists,
+        rating,
+        yellow,
+        red,
+        impact: rating > 0 ? rating.toFixed(1) : String(goals + assists),
+        extraLabel: `Min ${minutes} | B ${goals} | PD ${assists}`,
+        sortScore,
+      });
+    });
+  });
+
+  return rows
+    .sort((a, b) => {
+      if (b.sortScore !== a.sortScore) return b.sortScore - a.sortScore;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 16);
+};
+
+const buildPlayerRowsFromEvents = (events, match) => {
+  if (!Array.isArray(events) || events.length === 0) {
+    return [];
+  }
+
+  const rowsByKey = new Map();
+
+  const ensureRow = (playerName, teamName, teamId, teamLogo) => {
+    const safePlayerName = String(playerName || '').trim();
+    if (!safePlayerName) return null;
+
+    const key = `${teamId || normalizeLoose(teamName) || '*'}-${normalizeLoose(safePlayerName)}`;
+    if (!rowsByKey.has(key)) {
+      rowsByKey.set(key, {
+        id: key,
+        name: safePlayerName,
+        position: '-',
+        teamName: teamName || 'Equipe',
+        teamLogo: teamLogo || null,
+        impactValue: 0,
+        goals: 0,
+        assists: 0,
+        cards: 0,
+      });
+    }
+
+    return rowsByKey.get(key);
+  };
+
+  const homeTeamLogo = match?.homeTeamLogo || null;
+  const awayTeamLogo = match?.awayTeamLogo || null;
+
+  events.forEach((event) => {
+    const teamName = event?.team?.name || event?.teamName || 'Equipe';
+    const teamId = event?.team?.id ?? event?.teamId ?? null;
+    const teamLogo = isHomeEvent(event, match)
+      ? homeTeamLogo
+      : isAwayEvent(event, match)
+        ? awayTeamLogo
+        : null;
+
+    const playerRow = ensureRow(event?.player?.name || event?.playerName, teamName, teamId, teamLogo);
+    if (playerRow) {
+      if (isGoalEvent(event)) {
+        playerRow.goals += 1;
+        playerRow.impactValue += 3;
+      } else if (isCardEvent(event)) {
+        playerRow.cards += 1;
+        playerRow.impactValue += 1;
+      } else {
+        playerRow.impactValue += 1;
+      }
+    }
+
+    const assistRow = ensureRow(event?.assist?.name, teamName, teamId, teamLogo);
+    if (assistRow) {
+      assistRow.assists += 1;
+      assistRow.impactValue += 2;
+    }
+  });
+
+  return [...rowsByKey.values()]
+    .map((row) => ({
+      ...row,
+      impact: String(row.impactValue),
+      extraLabel: `B ${row.goals} | PD ${row.assists} | Cartons ${row.cards}`,
+    }))
+    .sort((a, b) => {
+      if (b.impactValue !== a.impactValue) return b.impactValue - a.impactValue;
+      if (b.goals !== a.goals) return b.goals - a.goals;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 12);
 };
 
 const buildPlayerRows = (lineups, events) => {
@@ -536,6 +708,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
   const [events, setEvents] = useState(Array.isArray(initialMatch?.events) ? initialMatch.events : []);
   const [statistics, setStatistics] = useState(Array.isArray(initialMatch?.statistics) ? initialMatch.statistics : []);
   const [lineups, setLineups] = useState(Array.isArray(initialMatch?.lineups) ? initialMatch.lineups : []);
+  const [playerStats, setPlayerStats] = useState(Array.isArray(initialMatch?.players) ? initialMatch.players : []);
   const [loading, setLoading] = useState(!initialMatch);
   const [activeTab, setActiveTab] = useState('summary');
   const [providerBlocked, setProviderBlocked] = useState(false);
@@ -543,7 +716,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
   const matchId = initialMatch?.matchId || initialMatch?.apiMatchId || initialMatch?.fixtureId || initialMatch?.id || null;
 
-  const applyMatchBundle = ({ matchData, eventData, statData, lineupData, providerStatus }) => {
+  const applyMatchBundle = ({ matchData, eventData, statData, lineupData, playerData, providerStatus }) => {
     if (matchData) {
       setMatch((previous) => ({
         ...previous,
@@ -559,6 +732,9 @@ export default function MatchDetailsScreen({ route, navigation }) {
       if (Array.isArray(matchData?.lineups) && matchData.lineups.length > 0) {
         setLineups(matchData.lineups);
       }
+      if (Array.isArray(matchData?.players) && matchData.players.length > 0) {
+        setPlayerStats(matchData.players);
+      }
     }
 
     setEvents((previous) => {
@@ -573,6 +749,11 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
     setLineups((previous) => {
       const next = Array.isArray(lineupData) ? lineupData : [];
+      return next.length > 0 ? next : previous;
+    });
+
+    setPlayerStats((previous) => {
+      const next = Array.isArray(playerData) ? playerData : [];
       return next.length > 0 ? next : previous;
     });
 
@@ -636,7 +817,15 @@ export default function MatchDetailsScreen({ route, navigation }) {
   }, [match?.country, match?.league, match?.round]);
 
   const statRows = useMemo(() => buildStatRows(statistics, match), [statistics, match]);
-  const playerRows = useMemo(() => buildPlayerRows(lineups, events), [lineups, events]);
+  const playerRows = useMemo(() => {
+    const apiRows = buildPlayerRowsFromApi(playerStats);
+    if (apiRows.length > 0) return apiRows;
+
+    const lineupRows = buildPlayerRows(lineups, events);
+    if (lineupRows.length > 0) return lineupRows;
+
+    return buildPlayerRowsFromEvents(events, match);
+  }, [playerStats, lineups, events, match]);
   const fallbackSummaryItems = useMemo(() => buildFallbackSummaryItems(match), [match]);
   const timelineEvents = useMemo(() => buildTimelineEvents(events, match), [events, match]);
   const goalEvents = useMemo(() => (timelineEvents || []).filter(isGoalEvent), [timelineEvents]);
@@ -650,9 +839,12 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
     const interval = setInterval(async () => {
       try {
-        const [nextMatchData, nextEvents] = await Promise.all([
+        const [nextMatchData, nextEvents, nextStatistics, nextLineups, nextPlayers] = await Promise.all([
           matchService.getMatchById(matchId),
           matchService.getMatchEvents(matchId),
+          matchService.getMatchStatistics(matchId),
+          matchService.getMatchLineups(matchId),
+          matchService.getMatchPlayers(matchId),
         ]);
 
         if (nextMatchData) {
@@ -661,6 +853,15 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
         if (Array.isArray(nextEvents) && nextEvents.length > 0) {
           setEvents(nextEvents);
+        }
+        if (Array.isArray(nextStatistics) && nextStatistics.length > 0) {
+          setStatistics(nextStatistics);
+        }
+        if (Array.isArray(nextLineups) && nextLineups.length > 0) {
+          setLineups(nextLineups);
+        }
+        if (Array.isArray(nextPlayers) && nextPlayers.length > 0) {
+          setPlayerStats(nextPlayers);
         }
       } catch (error) {
         console.error('Erreur refresh live details:', error);
@@ -683,6 +884,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
   const homeScore = phase === 'live' || phase === 'finished' ? match?.homeScore ?? match?.score?.home ?? '-' : '-';
   const awayScore = phase === 'live' || phase === 'finished' ? match?.awayScore ?? match?.score?.away ?? '-' : '-';
+  const hasScoreWithoutEvents = events.length === 0 && hasVisibleScore(match);
   const providerBlockedMessage = providerBlocked
     ? `API-Sports limite atteinte. Reessayez apres ${providerBlockedUntil ? new Date(providerBlockedUntil).toLocaleString('fr-FR') : 'reset quota'}.`
     : null;
@@ -794,8 +996,24 @@ export default function MatchDetailsScreen({ route, navigation }) {
               {events.length === 0 ? (
                 <View>
                   <Text style={styles.emptyText}>
-                    {providerBlockedMessage || 'Aucun evenement pour le moment.'}
+                    {providerBlockedMessage || (
+                      hasScoreWithoutEvents
+                        ? `Le score est bien ${homeScore}-${awayScore}, mais l'API du match ne fournit pas encore la timeline des evenements.`
+                        : 'Aucun evenement pour le moment.'
+                    )}
                   </Text>
+                  {hasScoreWithoutEvents ? (
+                    <View>
+                      <View style={styles.infoFallbackRow}>
+                        <Text style={styles.infoFallbackLabel}>Score live</Text>
+                        <Text style={styles.infoFallbackValue}>{String(homeScore)} - {String(awayScore)}</Text>
+                      </View>
+                      <View style={styles.infoFallbackRow}>
+                        <Text style={styles.infoFallbackLabel}>Statut provider</Text>
+                        <Text style={styles.infoFallbackValue}>Timeline indisponible pour ce match</Text>
+                      </View>
+                    </View>
+                  ) : null}
                 </View>
               ) : (
                 <View>
@@ -832,7 +1050,18 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
               {statRows.length === 0 ? (
                 <View>
-                  <Text style={styles.emptyText}>{providerBlockedMessage || 'Statistiques non disponibles (backend/API).'}</Text>
+                  <Text style={styles.emptyText}>
+                    {providerBlockedMessage || (
+                      phase === 'live' && hasVisibleScore(match)
+                        ? 'Le score est disponible, mais les statistiques detaillees ne sont pas encore publiees pour ce match.'
+                        : 'Les statistiques detaillees ne sont pas disponibles pour cette rencontre.'
+                    )}
+                  </Text>
+                  <Text style={styles.emptyHint}>
+                    {providerBlocked
+                      ? 'Les details reviendront apres reset du quota API-Sports.'
+                      : 'Le provider peut publier le score avant les chiffres avances comme possession, tirs ou passes.'}
+                  </Text>
                   <View style={styles.infoFallbackRow}>
                     <Text style={styles.infoFallbackLabel}>Buts domicile</Text>
                     <Text style={styles.infoFallbackValue}>{String(match?.homeScore ?? '-')}</Text>
@@ -869,7 +1098,18 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
               {lineups.length === 0 ? (
                 <View>
-                  <Text style={styles.emptyText}>{providerBlockedMessage || 'Compositions non disponibles (backend/API).'}</Text>
+                  <Text style={styles.emptyText}>
+                    {providerBlockedMessage || (
+                      phase === 'live'
+                        ? 'Les compositions officielles ne sont pas encore publiees pour ce match.'
+                        : 'Les compositions ne sont pas disponibles pour cette rencontre.'
+                    )}
+                  </Text>
+                  <Text style={styles.emptyHint}>
+                    {providerBlocked
+                      ? 'Les details reviendront apres reset du quota API-Sports.'
+                      : 'Certaines competitions publient les equipes titulaires plus tard, ou pas du tout via le provider.'}
+                  </Text>
                   <View style={styles.infoFallbackRow}>
                     <Text style={styles.infoFallbackLabel}>Equipe domicile</Text>
                     <Text style={styles.infoFallbackValue}>{match?.homeTeam || '-'}</Text>
@@ -922,11 +1162,17 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
               {playerRows.length === 0 ? (
                 <View>
-                  <Text style={styles.emptyText}>{providerBlockedMessage || 'Donnees joueurs indisponibles (backend/API).'}</Text>
+                  <Text style={styles.emptyText}>
+                    {providerBlockedMessage || (
+                      hasScoreWithoutEvents
+                        ? 'Les statistiques joueurs ne sont pas encore publiees pour ce match.'
+                        : 'Les fiches joueurs ne sont pas disponibles pour le moment.'
+                    )}
+                  </Text>
                   <Text style={styles.emptyHint}>
                     {providerBlocked
                       ? 'Les details reviendront apres reset du quota API-Sports.'
-                      : 'Astuce: il faut les endpoints `events`, `statistics` et `lineups` alimentes.'}
+                      : 'Reessayez un peu plus tard, ou consultez l onglet Compos si le provider publie la feuille de match avant les stats joueurs.'}
                   </Text>
                 </View>
               ) : (
@@ -939,6 +1185,9 @@ export default function MatchDetailsScreen({ route, navigation }) {
                       <View style={styles.playerIdentityTextWrap}>
                         <Text style={styles.playerStatName} numberOfLines={1}>{player.name}</Text>
                         <Text style={styles.playerStatMeta} numberOfLines={1}>{player.position} - {player.teamName}</Text>
+                        {!!player.extraLabel && (
+                          <Text style={styles.playerStatMeta} numberOfLines={1}>{player.extraLabel}</Text>
+                        )}
                       </View>
                     </View>
 

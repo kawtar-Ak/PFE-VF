@@ -17,19 +17,10 @@ import LeagueLogo from '../../components/LeagueLogo';
 import { getMatchPhase } from '../../utils/matchStatus';
 import { useAppTheme } from '../../src/theme/AppThemeContext';
 
-const LIVE_WINDOW_PAST_MS = 2 * 60 * 60 * 1000;
-const LIVE_WINDOW_FUTURE_MS = 4 * 60 * 60 * 1000;
-
 const isLiveStatus = (match) => getMatchPhase(match) === 'live';
-const isInLiveWindow = (matchDate) => {
-  const date = new Date(matchDate);
-  if (Number.isNaN(date.getTime())) return false;
-  const now = Date.now();
-  return date.getTime() >= now - LIVE_WINDOW_PAST_MS && date.getTime() <= now + LIVE_WINDOW_FUTURE_MS;
-};
 
 const normalizeLiveMatches = (matches) =>
-  (Array.isArray(matches) ? matches.filter((match) => isLiveStatus(match) && isInLiveWindow(match.date)) : [])
+  (Array.isArray(matches) ? matches.filter((match) => isLiveStatus(match)) : [])
     .sort((left, right) => new Date(left.date) - new Date(right.date));
 
 export default function LiveScreen({ navigation }) {

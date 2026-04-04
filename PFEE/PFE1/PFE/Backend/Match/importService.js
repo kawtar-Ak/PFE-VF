@@ -55,6 +55,7 @@ let livePollInProgress = false;
 let scheduledPollInProgress = false;
 let apiSportsBlockedUntil = 0;
 let apiSportsLastError = null;
+const detailHydrationInFlight = new Map();
 
 const getHeaders = () => ({
   "x-apisports-key": API_SPORTS_KEY
@@ -282,6 +283,7 @@ const fetchFixtureById = async (fixtureId) => {
 const fetchFixtureEvents = async (fixtureId) => requestApiSports("/fixtures/events", { fixture: fixtureId });
 const fetchFixtureStatistics = async (fixtureId) => requestApiSports("/fixtures/statistics", { fixture: fixtureId });
 const fetchFixtureLineups = async (fixtureId) => requestApiSports("/fixtures/lineups", { fixture: fixtureId });
+const fetchFixturePlayers = async (fixtureId) => requestApiSports("/fixtures/players", { fixture: fixtureId });
 const fetchLeagueStandings = async (leagueId, season = getCurrentSeason()) => requestApiSports("/standings", {
   league: leagueId,
   season
@@ -507,6 +509,7 @@ const finalizeStaleLiveMatches = async (activeLiveFixtureIds = []) => {
 const syncMatches = async (matches, io, options = {}) => {
   const emitUpdates = Boolean(options.emitUpdates);
   const includeLiveEvents = Boolean(options.includeLiveEvents);
+  const includeLiveDetails = Boolean(options.includeLiveDetails);
   const includeFinishedDetails = Boolean(options.includeFinishedDetails);
 
   let upserted = 0;
@@ -567,28 +570,35 @@ const syncMatches = async (matches, io, options = {}) => {
     const hasStoredEvents = Array.isArray(existing?.events) && existing.events.length > 0;
     const hasStoredStatistics = Array.isArray(existing?.statistics) && existing.statistics.length > 0;
     const hasStoredLineups = Array.isArray(existing?.lineups) && existing.lineups.length > 0;
+    const hasStoredPlayers = Array.isArray(existing?.players) && existing.players.length > 0;
     const coreChanged = hasCoreDynamicChange(existing, incoming);
     const needsFinishedHydration = incoming.status === "finished" && includeFinishedDetails && (
-      !hasStoredEvents || !hasStoredStatistics || !hasStoredLineups || existing?.status !== "finished"
+      !hasStoredEvents || !hasStoredStatistics || !hasStoredLineups || !hasStoredPlayers || existing?.status !== "finished"
     );
     // For live matches, avoid repeated API calls when nothing changed.
     const shouldHydrateLiveEvents = includeLiveEvents && incoming.status === "live" && (coreChanged || !hasStoredEvents);
-    const shouldHydrateDetails = shouldHydrateLiveEvents || needsFinishedHydration;
+    const shouldHydrateLiveSupplementalDetails = includeLiveDetails && incoming.status === "live" && (
+      coreChanged || !hasStoredStatistics || !hasStoredLineups || !hasStoredPlayers
+    );
+    const shouldHydrateDetails = shouldHydrateLiveEvents || shouldHydrateLiveSupplementalDetails || needsFinishedHydration;
 
     let events = [];
     let statistics = [];
     let lineups = [];
+    let players = [];
 
     if (shouldHydrateLiveEvents || needsFinishedHydration) {
       const liveEvents = await fetchFixtureEvents(incoming.fixtureId);
       events = dedupeEventsById(liveEvents.map(mapEventForStorage));
     }
 
-    if (needsFinishedHydration) {
+    if (shouldHydrateLiveSupplementalDetails || needsFinishedHydration) {
       const fetchedStatistics = await fetchFixtureStatistics(incoming.fixtureId);
       const fetchedLineups = await fetchFixtureLineups(incoming.fixtureId);
+      const fetchedPlayers = await fetchFixturePlayers(incoming.fixtureId);
       statistics = fetchedStatistics.map(mapStatistics);
       lineups = fetchedLineups.map(mapLineup);
+      players = fetchedPlayers.map(mapFixturePlayers);
     }
 
     const payload = {
@@ -615,6 +625,7 @@ const syncMatches = async (matches, io, options = {}) => {
       // Same principle: keep previously stored arrays when provider returns nothing.
       statistics: statistics.length > 0 ? statistics : (Array.isArray(existing?.statistics) ? existing.statistics : []),
       lineups: lineups.length > 0 ? lineups : (Array.isArray(existing?.lineups) ? existing.lineups : []),
+      players: players.length > 0 ? players : (Array.isArray(existing?.players) ? existing.players : []),
       updatedAt: new Date()
     };
 
@@ -693,6 +704,7 @@ const importLeagueMatches = async (leagueCode, io = null) => {
     const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
       emitUpdates: Boolean(io),
       includeLiveEvents: true,
+      includeLiveDetails: true,
       includeFinishedDetails: false
     });
 
@@ -740,6 +752,7 @@ const importAllMatches = async (io = null, options = {}) => {
     const { upserted, emitted } = await syncMatches([...bucket.values()], io, {
       emitUpdates: Boolean(io),
       includeLiveEvents: false,
+      includeLiveDetails: true,
       includeFinishedDetails: false
     });
     const staleLiveFixed = await finalizeStaleLiveMatches(
@@ -794,6 +807,7 @@ const pollLiveMatchesAndEmitUpdates = async (io) => {
     const { upserted, emitted } = await syncMatches(transformedMatches, io, {
       emitUpdates: true,
       includeLiveEvents: true,
+      includeLiveDetails: true,
       includeFinishedDetails: false
     });
     const staleLiveFixed = await finalizeStaleLiveMatches(
@@ -887,6 +901,7 @@ const serializeMatch = (matchDoc, options = {}) => {
     events: includeDetails && Array.isArray(matchDoc.events) ? matchDoc.events : [],
     statistics: includeDetails && Array.isArray(matchDoc.statistics) ? matchDoc.statistics : [],
     lineups: includeDetails && Array.isArray(matchDoc.lineups) ? matchDoc.lineups : [],
+    players: includeDetails && Array.isArray(matchDoc.players) ? matchDoc.players : [],
     updatedAt: matchDoc.updatedAt
   };
 };
@@ -902,81 +917,104 @@ const buildMatchQueryById = (fixtureId) => ({
 const hydrateStoredMatchDetails = async (fixtureId, options = {}) => {
   const safeFixtureId = Number(fixtureId);
   if (!Number.isInteger(safeFixtureId)) {
-    return { stored: null, events: [], statistics: [], lineups: [], updated: false };
+    return { stored: null, events: [], statistics: [], lineups: [], players: [], updated: false };
   }
 
-  const existing = await Match.findOne(buildMatchQueryById(safeFixtureId))
-    .select({ events: 1, statistics: 1, lineups: 1 })
-    .lean();
-
-  if (!existing) {
-    return { stored: null, events: [], statistics: [], lineups: [], updated: false };
+  const hydrationKey = `${safeFixtureId}:${options.force === true ? "force" : "default"}`;
+  if (detailHydrationInFlight.has(hydrationKey)) {
+    return detailHydrationInFlight.get(hydrationKey);
   }
 
-  const shouldFetchEvents = options.force === true || !Array.isArray(existing.events) || existing.events.length === 0;
-  const shouldFetchStatistics = options.force === true || !Array.isArray(existing.statistics) || existing.statistics.length === 0;
-  const shouldFetchLineups = options.force === true || !Array.isArray(existing.lineups) || existing.lineups.length === 0;
+  const hydrationPromise = (async () => {
+    const existing = await Match.findOne(buildMatchQueryById(safeFixtureId))
+      .select({ events: 1, statistics: 1, lineups: 1, players: 1 })
+      .lean();
 
-  if (!shouldFetchEvents && !shouldFetchStatistics && !shouldFetchLineups) {
+    if (!existing) {
+      return { stored: null, events: [], statistics: [], lineups: [], players: [], updated: false };
+    }
+
+    const shouldFetchEvents = options.force === true || !Array.isArray(existing.events) || existing.events.length === 0;
+    const shouldFetchStatistics = options.force === true || !Array.isArray(existing.statistics) || existing.statistics.length === 0;
+    const shouldFetchLineups = options.force === true || !Array.isArray(existing.lineups) || existing.lineups.length === 0;
+    const shouldFetchPlayers = options.force === true || !Array.isArray(existing.players) || existing.players.length === 0;
+
+    if (!shouldFetchEvents && !shouldFetchStatistics && !shouldFetchLineups && !shouldFetchPlayers) {
+      return {
+        stored: existing,
+        events: existing.events || [],
+        statistics: existing.statistics || [],
+        lineups: existing.lineups || [],
+        players: existing.players || [],
+        updated: false
+      };
+    }
+
+    const [eventsResponse, statisticsResponse, lineupsResponse, playersResponse] = await Promise.all([
+      shouldFetchEvents ? fetchFixtureEvents(safeFixtureId) : Promise.resolve(null),
+      shouldFetchStatistics ? fetchFixtureStatistics(safeFixtureId) : Promise.resolve(null),
+      shouldFetchLineups ? fetchFixtureLineups(safeFixtureId) : Promise.resolve(null),
+      shouldFetchPlayers ? fetchFixturePlayers(safeFixtureId) : Promise.resolve(null)
+    ]);
+
+    const nextEvents = Array.isArray(eventsResponse)
+      ? dedupeEventsById(eventsResponse.map(mapEventForStorage))
+      : null;
+    const nextStatistics = Array.isArray(statisticsResponse)
+      ? statisticsResponse.map(mapStatistics)
+      : null;
+    const nextLineups = Array.isArray(lineupsResponse)
+      ? lineupsResponse.map(mapLineup)
+      : null;
+    const nextPlayers = Array.isArray(playersResponse)
+      ? playersResponse.map(mapFixturePlayers)
+      : null;
+
+    const updatePayload = {};
+
+    if (Array.isArray(nextEvents) && nextEvents.length > 0) {
+      updatePayload.events = nextEvents;
+    }
+
+    if (Array.isArray(nextStatistics) && nextStatistics.length > 0) {
+      updatePayload.statistics = nextStatistics;
+    }
+
+    if (Array.isArray(nextLineups) && nextLineups.length > 0) {
+      updatePayload.lineups = nextLineups;
+    }
+
+    if (Array.isArray(nextPlayers) && nextPlayers.length > 0) {
+      updatePayload.players = nextPlayers;
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      updatePayload.updatedAt = new Date();
+      await Match.findOneAndUpdate(
+        buildMatchQueryById(safeFixtureId),
+        { $set: updatePayload },
+        { new: false }
+      );
+    }
+
+    const stored = await Match.findOne(buildMatchQueryById(safeFixtureId))
+      .select({ events: 1, statistics: 1, lineups: 1, players: 1 })
+      .lean();
+
     return {
-      stored: existing,
-      events: existing.events || [],
-      statistics: existing.statistics || [],
-      lineups: existing.lineups || [],
-      updated: false
+      stored,
+      events: stored?.events || [],
+      statistics: stored?.statistics || [],
+      lineups: stored?.lineups || [],
+      players: stored?.players || [],
+      updated: Object.keys(updatePayload).length > 0
     };
-  }
+  })().finally(() => {
+    detailHydrationInFlight.delete(hydrationKey);
+  });
 
-  const [eventsResponse, statisticsResponse, lineupsResponse] = await Promise.all([
-    shouldFetchEvents ? fetchFixtureEvents(safeFixtureId) : Promise.resolve(null),
-    shouldFetchStatistics ? fetchFixtureStatistics(safeFixtureId) : Promise.resolve(null),
-    shouldFetchLineups ? fetchFixtureLineups(safeFixtureId) : Promise.resolve(null)
-  ]);
-
-  const nextEvents = Array.isArray(eventsResponse)
-    ? dedupeEventsById(eventsResponse.map(mapEventForStorage))
-    : null;
-  const nextStatistics = Array.isArray(statisticsResponse)
-    ? statisticsResponse.map(mapStatistics)
-    : null;
-  const nextLineups = Array.isArray(lineupsResponse)
-    ? lineupsResponse.map(mapLineup)
-    : null;
-
-  const updatePayload = {};
-
-  if (Array.isArray(nextEvents) && nextEvents.length > 0) {
-    updatePayload.events = nextEvents;
-  }
-
-  if (Array.isArray(nextStatistics) && nextStatistics.length > 0) {
-    updatePayload.statistics = nextStatistics;
-  }
-
-  if (Array.isArray(nextLineups) && nextLineups.length > 0) {
-    updatePayload.lineups = nextLineups;
-  }
-
-  if (Object.keys(updatePayload).length > 0) {
-    updatePayload.updatedAt = new Date();
-    await Match.findOneAndUpdate(
-      buildMatchQueryById(safeFixtureId),
-      { $set: updatePayload },
-      { new: false }
-    );
-  }
-
-  const stored = await Match.findOne(buildMatchQueryById(safeFixtureId))
-    .select({ events: 1, statistics: 1, lineups: 1 })
-    .lean();
-
-  return {
-    stored,
-    events: stored?.events || [],
-    statistics: stored?.statistics || [],
-    lineups: stored?.lineups || [],
-    updated: Object.keys(updatePayload).length > 0
-  };
+  detailHydrationInFlight.set(hydrationKey, hydrationPromise);
+  return hydrationPromise;
 };
 
 const findStoredMatchById = async (fixtureId) => {
@@ -996,6 +1034,7 @@ const getMatchDetails = async (fixtureId) => {
     await syncMatches([transformed], null, {
       emitUpdates: false,
       includeLiveEvents: true,
+      includeLiveDetails: true,
       includeFinishedDetails: true
     });
   }
@@ -1102,9 +1141,94 @@ const mapLineup = (lineup) => ({
   substitutes: mapLineupPlayers(lineup?.substitutes)
 });
 
+const mapPlayerDetails = (player) => ({
+  id: player?.player?.id ?? null,
+  name: player?.player?.name || null,
+  photo: player?.player?.photo || null
+});
+
+const mapPlayerStatisticsBlock = (stats = {}) => ({
+  games: {
+    minutes: stats?.games?.minutes ?? null,
+    number: stats?.games?.number ?? null,
+    position: stats?.games?.position || null,
+    rating: stats?.games?.rating ?? null,
+    captain: stats?.games?.captain ?? false,
+    substitute: stats?.games?.substitute ?? false
+  },
+  offsides: stats?.offsides ?? null,
+  shots: {
+    total: stats?.shots?.total ?? null,
+    on: stats?.shots?.on ?? null
+  },
+  goals: {
+    total: stats?.goals?.total ?? null,
+    conceded: stats?.goals?.conceded ?? null,
+    assists: stats?.goals?.assists ?? null,
+    saves: stats?.goals?.saves ?? null
+  },
+  passes: {
+    total: stats?.passes?.total ?? null,
+    key: stats?.passes?.key ?? null,
+    accuracy: stats?.passes?.accuracy ?? null
+  },
+  tackles: {
+    total: stats?.tackles?.total ?? null,
+    blocks: stats?.tackles?.blocks ?? null,
+    interceptions: stats?.tackles?.interceptions ?? null
+  },
+  duels: {
+    total: stats?.duels?.total ?? null,
+    won: stats?.duels?.won ?? null
+  },
+  dribbles: {
+    attempts: stats?.dribbles?.attempts ?? null,
+    success: stats?.dribbles?.success ?? null,
+    past: stats?.dribbles?.past ?? null
+  },
+  fouls: {
+    drawn: stats?.fouls?.drawn ?? null,
+    committed: stats?.fouls?.committed ?? null
+  },
+  cards: {
+    yellow: stats?.cards?.yellow ?? null,
+    red: stats?.cards?.red ?? null
+  },
+  penalty: {
+    won: stats?.penalty?.won ?? null,
+    committed: stats?.penalty?.commited ?? stats?.penalty?.committed ?? null,
+    scored: stats?.penalty?.scored ?? null,
+    missed: stats?.penalty?.missed ?? null,
+    saved: stats?.penalty?.saved ?? null
+  }
+});
+
+const mapFixturePlayers = (teamEntry) => ({
+  team: {
+    id: teamEntry?.team?.id ?? null,
+    name: teamEntry?.team?.name || null,
+    logo: teamEntry?.team?.logo || null,
+    colors: teamEntry?.team?.colors || null
+  },
+  players: Array.isArray(teamEntry?.players)
+    ? teamEntry.players.map((player) => {
+        const stats = Array.isArray(player?.statistics) ? player.statistics[0] || {} : {};
+        return {
+          player: mapPlayerDetails(player),
+          statistics: mapPlayerStatisticsBlock(stats)
+        };
+      })
+    : []
+});
+
 const getMatchLineups = async (fixtureId) => {
   const hydrated = await hydrateStoredMatchDetails(fixtureId, { force: false });
   return Array.isArray(hydrated?.lineups) ? hydrated.lineups : [];
+};
+
+const getMatchPlayers = async (fixtureId) => {
+  const hydrated = await hydrateStoredMatchDetails(fixtureId, { force: false });
+  return Array.isArray(hydrated?.players) ? hydrated.players : [];
 };
 
 const resolveLeagueIdByName = (leagueName) => {
@@ -1165,7 +1289,8 @@ const hydrateFinishedMatchesDetails = async (limit = 20) => {
     $or: [
       { "events.0": { $exists: false } },
       { "statistics.0": { $exists: false } },
-      { "lineups.0": { $exists: false } }
+      { "lineups.0": { $exists: false } },
+      { "players.0": { $exists: false } }
     ]
   })
     .sort({ date: -1 })
@@ -1180,14 +1305,15 @@ const hydrateFinishedMatchesDetails = async (limit = 20) => {
     const fixtureId = item?.fixtureId;
     if (!fixtureId) continue;
 
-    const [events, statistics, lineups] = await Promise.all([
+    const [events, statistics, lineups, players] = await Promise.all([
       getMatchEvents(fixtureId),
       getMatchStatistics(fixtureId),
-      getMatchLineups(fixtureId)
+      getMatchLineups(fixtureId),
+      getMatchPlayers(fixtureId)
     ]);
 
     processed += 1;
-    if ((events?.length || 0) > 0 || (statistics?.length || 0) > 0 || (lineups?.length || 0) > 0) {
+    if ((events?.length || 0) > 0 || (statistics?.length || 0) > 0 || (lineups?.length || 0) > 0 || (players?.length || 0) > 0) {
       updated += 1;
     }
   }
@@ -1201,7 +1327,8 @@ const hydrateFinishedMatchesDetails = async (limit = 20) => {
       $or: [
         { "events.0": { $exists: false } },
         { "statistics.0": { $exists: false } },
-        { "lineups.0": { $exists: false } }
+        { "lineups.0": { $exists: false } },
+        { "players.0": { $exists: false } }
       ]
     })
   };
@@ -1217,6 +1344,7 @@ module.exports = {
   getMatchEvents,
   getMatchStatistics,
   getMatchLineups,
+  getMatchPlayers,
   getLeagueStandings,
   resolveLeagueIdByName,
   findStoredMatchById,
