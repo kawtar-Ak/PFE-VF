@@ -14,6 +14,24 @@ const API_SPORTS_BASE_URL = String(
 const API_SPORTS_KEY = process.env.APISPORTS_KEY || process.env.API_SPORTS_KEY;
 const IMPORT_TIMEZONE = process.env.MATCH_TIMEZONE || "Europe/Paris";
 
+const readBooleanEnv = (name, fallback = false) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+
+  const normalized = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+};
+
 const readNumberEnv = (name, fallback) => {
   const raw = process.env[name];
   if (raw === undefined || raw === null || raw === "") {
@@ -34,6 +52,7 @@ const API_SPORTS_RATE_LIMIT_BACKOFF_MS = Math.max(
   15 * 1000,
   readNumberEnv("APISPORTS_RATE_LIMIT_BACKOFF_MS", 75 * 1000)
 );
+const API_SPORTS_OFFLINE_MODE = readBooleanEnv("APISPORTS_OFFLINE_MODE", false);
 
 const LIVE_STATUSES = new Set(["1H", "2H", "HT", "ET", "P"]);
 const FINISHED_STATUSES = new Set(["FT", "AET", "PEN"]);
@@ -157,6 +176,14 @@ const requestApiSports = async (path, params = {}) => {
   if (!API_SPORTS_KEY) {
     apiSportsLastError = { config: "APISPORTS_KEY not configured" };
     console.warn("APISPORTS_KEY not configured.");
+    return [];
+  }
+
+  if (API_SPORTS_OFFLINE_MODE) {
+    apiSportsLastError = {
+      offlineMode: true,
+      message: "API-Sports disabled; serving cached MongoDB data only"
+    };
     return [];
   }
 
@@ -1351,6 +1378,7 @@ module.exports = {
   listMatches,
   hydrateFinishedMatchesDetails,
   getApiSportsStatus: () => ({
+    offlineMode: API_SPORTS_OFFLINE_MODE,
     blocked: apiSportsBlockedUntil > Date.now(),
     blockedUntil: apiSportsBlockedUntil || null,
     lastError: apiSportsLastError,

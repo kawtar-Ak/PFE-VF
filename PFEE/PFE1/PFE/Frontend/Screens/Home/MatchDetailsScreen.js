@@ -713,6 +713,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
   const [activeTab, setActiveTab] = useState('summary');
   const [providerBlocked, setProviderBlocked] = useState(false);
   const [providerBlockedUntil, setProviderBlockedUntil] = useState(null);
+  const [providerOfflineMode, setProviderOfflineMode] = useState(false);
 
   const matchId = initialMatch?.matchId || initialMatch?.apiMatchId || initialMatch?.fixtureId || initialMatch?.id || null;
 
@@ -759,6 +760,7 @@ export default function MatchDetailsScreen({ route, navigation }) {
 
     setProviderBlocked(Boolean(providerStatus?.blocked));
     setProviderBlockedUntil(providerStatus?.blockedUntil || null);
+    setProviderOfflineMode(Boolean(providerStatus?.offlineMode));
   };
 
   useEffect(() => {
@@ -885,9 +887,11 @@ export default function MatchDetailsScreen({ route, navigation }) {
   const homeScore = phase === 'live' || phase === 'finished' ? match?.homeScore ?? match?.score?.home ?? '-' : '-';
   const awayScore = phase === 'live' || phase === 'finished' ? match?.awayScore ?? match?.score?.away ?? '-' : '-';
   const hasScoreWithoutEvents = events.length === 0 && hasVisibleScore(match);
-  const providerBlockedMessage = providerBlocked
-    ? `API-Sports limite atteinte. Reessayez apres ${providerBlockedUntil ? new Date(providerBlockedUntil).toLocaleString('fr-FR') : 'reset quota'}.`
-    : null;
+  const providerBlockedMessage = providerOfflineMode
+    ? 'Mode demo actif: l application affiche les matchs deja synchronises depuis la base locale.'
+    : providerBlocked
+      ? `Quota API-Sports temporairement atteint. Les matchs deja synchronises restent visibles. Reessayez apres ${providerBlockedUntil ? new Date(providerBlockedUntil).toLocaleString('fr-FR') : 'reset quota'}.`
+      : null;
   return (
     <View style={styles.container}>
       <View style={styles.header}>

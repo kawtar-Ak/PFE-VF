@@ -20,12 +20,31 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/PFE";
+const readBooleanEnv = (name, fallback = false) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+
+  const normalized = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+};
 const LIVE_POLL_INTERVAL_MS = Number(process.env.LIVE_POLL_INTERVAL_MS || 60000);
 const SCHEDULED_POLL_INTERVAL_MS = Number(
   process.env.SCHEDULED_POLL_INTERVAL_MS ||
   process.env.MATCH_IMPORT_INTERVAL_MS ||
   300000
 );
+const API_SPORTS_BACKGROUND_SYNC_ENABLED = readBooleanEnv("APISPORTS_BACKGROUND_SYNC_ENABLED", true);
+const API_SPORTS_OFFLINE_MODE = readBooleanEnv("APISPORTS_OFFLINE_MODE", false);
 const ALLOWED_ORIGINS = String(
   process.env.CORS_ORIGINS ||
   "http://localhost:8081,http://localhost:19006,http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:19006,http://127.0.0.1:3000"
@@ -167,12 +186,22 @@ const startServer = async () => {
         console.log("MongoDB connected to", MONGO_URI);
         console.log("Live poll interval (ms):", LIVE_POLL_INTERVAL_MS);
         console.log("Scheduled import interval (ms):", SCHEDULED_POLL_INTERVAL_MS);
-        console.log("Refreshing current and upcoming matches from API-Sports...");
         console.log("Refresh window (days):", {
           past: REFRESH_PAST_DAYS,
           future: REFRESH_FUTURE_DAYS
         });
 
+        if (API_SPORTS_OFFLINE_MODE) {
+          console.log("API-Sports offline mode enabled. Serving cached MongoDB data only.");
+          return;
+        }
+
+        if (!API_SPORTS_BACKGROUND_SYNC_ENABLED) {
+          console.log("API-Sports background sync disabled. Automatic imports and polling are paused.");
+          return;
+        }
+
+        console.log("Refreshing current and upcoming matches from API-Sports...");
         importAllMatches(io, {
           pastDays: REFRESH_PAST_DAYS,
           futureDays: REFRESH_FUTURE_DAYS
